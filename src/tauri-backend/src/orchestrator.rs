@@ -47,11 +47,19 @@ pub struct DiagnosisResult {
 #[tauri::command]
 pub async fn get_health_summary() -> HealthSummary {
     tokio::task::spawn_blocking(|| {
-        let wsl_check = wsl_bridge::exec_wsl("echo 'WSL is running' && uname -a");
-        let wsl_running = wsl_check.success;
+        // أمر واحد يجمع الفحصين — أسرع بكثير
+        let combined = wsl_bridge::exec_wsl(
+            "echo 'WSL_OK' && openclaw health --json 2>/dev/null || echo '{\"ok\":false}'"
+        );
+        let wsl_running = combined.success && combined.stdout.contains("WSL_OK");
 
-        let gw_result = wsl_bridge::exec_wsl("openclaw health --json 2>/dev/null || echo '{\"ok\":false}'");
-        let gw = match serde_json::from_str::<serde_json::Value>(&gw_result.stdout) {
+        // استخرج JSON من المخرجات (بعد سطر WSL_OK)
+        let json_str = combined.stdout.lines()
+            .skip_while(|l| !l.starts_with('{'))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let gw = match serde_json::from_str::<serde_json::Value>(&json_str) {
             Ok(json) => wsl_bridge::GatewayHealth {
                 ok: json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
                 running: false,
