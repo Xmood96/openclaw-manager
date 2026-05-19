@@ -108,13 +108,12 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
     }
   };
 
-  const runAction = async (label: string, command: string) => {
+  const runAction = async (label: string, command: string, useWindows: boolean = false) => {
     setRunningAction(true);
     setActionOutput(`🔄 ${label}...`);
     try {
-      const result = await invoke<string>("run_install_command", {
-        command,
-      });
+      const fn = useWindows ? "run_windows_command" : "run_install_command";
+      const result = await invoke<string>(fn, { command });
       setActionOutput(result);
     } catch (e) {
       setActionOutput(`❌ ${e}`);
@@ -248,15 +247,17 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                     e.stopPropagation();
                     const phase = status?.overall_phase;
                     let cmd = "";
+                    let useWindows = false;
                     switch (phase) {
                       case "NoWSL":
                         cmd = "wsl --install";
+                        useWindows = true;
                         break;
                       case "WSLNoDistro":
                         cmd = "wsl --install -d Ubuntu-24.04";
+                        useWindows = true;
                         break;
                       case "DistroNoOpenClaw":
-                        // اختر npm تلقائيًا
                         cmd = "npm install -g openclaw";
                         break;
                       case "OpenClawNoConfig":
@@ -268,7 +269,7 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                       default:
                         cmd = "openclaw doctor --fix --non-interactive";
                     }
-                    await runAction(step.action_label, cmd);
+                    await runAction(step.action_label, cmd, useWindows);
                   }}
                 >
                   {runningAction ? "🔄 جاري..." : step.action_label}

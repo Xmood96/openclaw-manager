@@ -41,6 +41,7 @@ pub fn run() {
             setup::get_openclaw_install_options,
             setup::get_setup_guide,
             setup::run_install_command,
+            setup::run_windows_command,
             setup::get_model_recommendations,
         ])
         .setup(|app| {

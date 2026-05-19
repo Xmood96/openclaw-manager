@@ -573,3 +573,24 @@ pub fn run_install_command(command: String) -> String {
         Err(e) => format!("❌ خطأ: {}", e),
     }
 }
+
+/// تنفيذ أمر مباشر على ويندوز (بدون WSL)
+#[tauri::command]
+pub fn run_windows_command(command: String) -> String {
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &command])
+        .output();
+
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if out.status.success() {
+                format!("✅ تم بنجاح\n{}", stdout)
+            } else {
+                format!("❌ فشل:\n{}", stderr)
+            }
+        }
+        Err(e) => format!("❌ خطأ: {}", e),
+    }
+}
