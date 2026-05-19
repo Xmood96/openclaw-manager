@@ -214,7 +214,7 @@ fn check_ubuntu_distro() -> ComponentStatus {
             ComponentStatus {
                 installed: has_ubuntu,
                 version: distro_name,
-                details: stdout,
+                details: stdout.to_string(),
             }
         }
         Err(e) => ComponentStatus {
