@@ -188,39 +188,42 @@ fn check_wsl_installed() -> ComponentStatus {
 
 /// فحص توزيعة Ubuntu
 fn check_ubuntu_distro() -> ComponentStatus {
-    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
-
-    // wsl -l -q يعطي قائمة بالتوزيعات (سطر واحد لكل توزيعة)
-    let output = Command::new(&wsl_exe)
-        .args(["-l", "-q"])
+    // الطريقة المباشرة: نجرب نشغّل echo جوة Ubuntu
+    // هذا أضمن من wsl -l -q لأن الأخير ممكن يعلق أو يرجع exit code غلط
+    let output = Command::new("wsl.exe")
+        .args(["-d", "Ubuntu", "--", "echo", "OK"])
         .output();
 
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            // نحول لـ lowercase عشان المقارنة
-            let lower = stdout.to_lowercase();
-            let has_ubuntu = lower.contains("ubuntu");
+            let installed = out.status.success() && stdout.trim() == "OK";
 
-            // نجيب اسم التوزيعة بالضبط (للأوامر اللاحقة)
-            let distro_name = if has_ubuntu {
-                stdout.lines()
-                    .find(|l| l.to_lowercase().contains("ubuntu"))
-                    .map(|l| l.trim().to_string())
+            if installed {
+                // نجيب الإصدار
+                let ver = Command::new("wsl.exe")
+                    .args(["-d", "Ubuntu", "--", "lsb_release", "-ds"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+
+                ComponentStatus {
+                    installed: true,
+                    version: if ver.is_empty() { Some("Ubuntu".into()) } else { Some(ver) },
+                    details: "توزيعة Ubuntu جاهزة ✓".into(),
+                }
             } else {
-                None
-            };
-
-            ComponentStatus {
-                installed: has_ubuntu,
-                version: distro_name,
-                details: stdout.to_string(),
+                ComponentStatus {
+                    installed: false,
+                    version: None,
+                    details: format!("Ubuntu غير موجودة (echo test فشل): {}", stdout),
+                }
             }
         }
         Err(e) => ComponentStatus {
             installed: false,
             version: None,
-            details: format!("خطأ: {}", e),
+            details: format!("wsl.exe غير متاح: {}", e),
         },
     }
 }
@@ -555,42 +558,48 @@ pub fn get_model_recommendations() -> Vec<ModelRecommendation> {
 
 /// تنفيذ أمر تثبيت في WSL
 #[tauri::command]
-pub fn run_install_command(command: String) -> String {
-    let output = Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", &command])
-        .output();
+pub async fn run_install_command(command: String) -> String {
+    let result = tokio::task::spawn_blocking(move || {
+        let output = Command::new("wsl.exe")
+            .args(["-d", "Ubuntu", "--", "bash", "-c", &command])
+            .output();
 
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if out.status.success() {
-                format!("✅ تم بنجاح\n{}", stdout)
-            } else {
-                format!("❌ فشل:\n{}", stderr)
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if out.status.success() {
+                    format!("✅ تم بنجاح\n{}", stdout)
+                } else {
+                    format!("❌ فشل:\n{}", stderr)
+                }
             }
+            Err(e) => format!("❌ خطأ: {}", e),
         }
-        Err(e) => format!("❌ خطأ: {}", e),
-    }
+    }).await.unwrap_or_else(|e| format!("❌ خطأ داخلي: {}", e));
+    result
 }
 
 /// تنفيذ أمر مباشر على ويندوز (بدون WSL)
 #[tauri::command]
-pub fn run_windows_command(command: String) -> String {
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-Command", &command])
-        .output();
+pub async fn run_windows_command(command: String) -> String {
+    let result = tokio::task::spawn_blocking(move || {
+        let output = Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", &command])
+            .output();
 
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if out.status.success() {
-                format!("✅ تم بنجاح\n{}", stdout)
-            } else {
-                format!("❌ فشل:\n{}", stderr)
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if out.status.success() {
+                    format!("✅ تم بنجاح\n{}", stdout)
+                } else {
+                    format!("❌ فشل:\n{}", stderr)
+                }
             }
+            Err(e) => format!("❌ خطأ: {}", e),
         }
-        Err(e) => format!("❌ خطأ: {}", e),
-    }
+    }).await.unwrap_or_else(|e| format!("❌ خطأ داخلي: {}", e));
+    result
 }
