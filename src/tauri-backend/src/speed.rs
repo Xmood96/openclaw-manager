@@ -24,10 +24,10 @@ pub struct ChannelSnap {
 }
 
 pub fn take_snapshot() -> SystemSnapshot {
-    // المسار الكامل لـ openclaw + node (لأن PATH قد لا يكون متاحًا في bash غير تفاعلي)
+    // المسار الكامل — ~ لا يتوسع في متغيرات bash غير التفاعلية
     let script = r#"
-OC=~/.npm-global/bin/openclaw
-GW=$($OC health --json 2>/dev/null)
+export PATH="$HOME/.npm-global/bin:$PATH"
+GW=$(openclaw health --json 2>/dev/null)
 GWOK=false; GWVER=""; P=0; S=0
 if echo "$GW" | grep -q '"ok".*true' 2>/dev/null; then
   GWOK=true
@@ -35,8 +35,8 @@ if echo "$GW" | grep -q '"ok".*true' 2>/dev/null; then
   P=$(pgrep -f 'openclaw gateway' 2>/dev/null | head -1); [ -z "$P" ] && P=0
   S=$(pgrep -c 'openclaw' 2>/dev/null || echo 0)
 fi
-NODEVER=$(~/.npm-global/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null || echo "")
-OCVER=$($OC --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+NODEVER=$(node --version 2>/dev/null || echo "")
+OCVER=$(openclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
 echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version\":\"$GWVER\",\"gateway_pid\":$P,\"channels\":[],\"active_sessions\":$S,\"node_version\":\"$NODEVER\",\"openclaw_version\":\"$OCVER\"}"
 "#;
 
@@ -85,7 +85,7 @@ echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version
 pub fn start_gateway() -> Result<String, String> {
     let output = std::process::Command::new("wsl.exe")
         .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "~/.npm-global/bin/openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; ~/.npm-global/bin/openclaw health --json 2>/dev/null | grep -q '\"ok\".*true' && echo OK || echo FAIL"])
+            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | grep -q '\"ok\".*true' && echo OK || echo FAIL"])
         .output();
 
     match output {
@@ -100,7 +100,7 @@ pub fn start_gateway() -> Result<String, String> {
 
 pub fn stop_gateway() -> Result<String, String> {
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", "~/.npm-global/bin/openclaw gateway stop 2>&1"])
+        .args(["-d", "Ubuntu", "--", "bash", "-c", "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway stop 2>&1"])
         .output();
 
     match output {
