@@ -28,11 +28,18 @@ pub struct GatewayReport {
 
 /// تصدير تقرير تشخيص شامل
 #[tauri::command]
-pub fn export_diagnostics() -> DiagnosticReport {
-    let wsl = wsl_bridge::check_wsl_status();
-    let health = wsl_bridge::check_gateway_health();
-    let doctor = wsl_bridge::run_openclaw_doctor();
-    let logs = wsl_bridge::read_gateway_logs(Some(50));
+pub async fn export_diagnostics() -> DiagnosticReport {
+    tokio::task::spawn_blocking(|| {
+    let wsl = wsl_bridge::exec_wsl("echo 'WSL is running' && uname -a");
+    let health_result = wsl_bridge::exec_wsl("openclaw health --json 2>/dev/null || echo '{\"ok\":false}'");
+    let health_ok = serde_json::from_str::<serde_json::Value>(&health_result.stdout)
+        .map(|j| j.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+        .unwrap_or(false);
+    let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
+    let logs = {
+        let r = wsl_bridge::exec_wsl("tail -50 /tmp/openclaw/*.log 2>/dev/null || echo 'لا توجد سجلات'");
+        if r.success { r.stdout } else { r.stderr }
+    };
 
     let mut errors = Vec::new();
     let mut recs = Vec::new();
@@ -60,11 +67,19 @@ pub fn export_diagnostics() -> DiagnosticReport {
             distro_info: if wsl.success { wsl.stdout } else { wsl.stderr },
         },
         gateway: GatewayReport {
-            health_ok: health.ok,
+            health_ok,
             doctor_result: if doctor.success { "تم بنجاح".into() } else { doctor.stderr },
             recent_logs: logs,
         },
         errors,
         recommendations: recs,
     }
+    }).await.unwrap_or_else(|e| DiagnosticReport {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        wsl: WslReport { running: false, distro_info: format!("خطأ: {}", e) },
+        gateway: GatewayReport { health_ok: false, doctor_result: String::new(), recent_logs: String::new() },
+        errors: vec![format!("فشل التشخيص: {}", e)],
+        recommendations: Vec::new(),
+    })
 }

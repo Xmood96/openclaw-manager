@@ -26,7 +26,7 @@ pub struct GatewayStatus {
 
 /// الاتصال بـ Gateway عبر WebSocket
 #[tauri::command]
-pub fn connect_to_gateway(url: Option<String>) -> GatewayStatus {
+pub async fn connect_to_gateway(url: Option<String>) -> GatewayStatus {
     let ws_url = url.unwrap_or_else(|| "ws://127.0.0.1:18789".into());
 
     match connect(ws_url.as_str()) {
@@ -93,14 +93,14 @@ pub fn connect_to_gateway(url: Option<String>) -> GatewayStatus {
 
 /// إرسال رسالة إلى agent الصيانة
 #[tauri::command]
-pub fn send_agent_message(message: String) -> String {
+pub async fn send_agent_message(message: String) -> String {
     // TODO: full implementation with chat.send via WS
     format!("تم استلام الرسالة: {}", message)
 }
 
 /// الحصول على حالة Gateway
 #[tauri::command]
-pub fn get_gateway_status() -> GatewayStatus {
+pub async fn get_gateway_status() -> GatewayStatus {
     GatewayStatus {
         connected: false,
         version: None,

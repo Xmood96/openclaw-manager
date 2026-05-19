@@ -5,7 +5,7 @@ use crate::wsl_bridge;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthSummary {
-    pub overall: String,          // "good" | "degraded" | "down" | "error"
+    pub overall: String,
     pub wsl: WslStatus,
     pub gateway: GatewayProbe,
     pub channels: Vec<ChannelInfo>,
@@ -45,112 +45,119 @@ pub struct DiagnosisResult {
 
 /// فحص شامل للنظام
 #[tauri::command]
-pub fn get_health_summary() -> HealthSummary {
-    // 1. فحص WSL
-    let wsl_check = wsl_bridge::check_wsl_status();
-    let wsl_running = wsl_check.success;
+pub async fn get_health_summary() -> HealthSummary {
+    tokio::task::spawn_blocking(|| {
+        let wsl_check = wsl_bridge::exec_wsl("echo 'WSL is running' && uname -a");
+        let wsl_running = wsl_check.success;
 
-    // 2. فحص Gateway
-    let gw = wsl_bridge::check_gateway_health();
+        let gw_result = wsl_bridge::exec_wsl("openclaw health --json 2>/dev/null || echo '{\"ok\":false}'");
+        let gw = match serde_json::from_str::<serde_json::Value>(&gw_result.stdout) {
+            Ok(json) => wsl_bridge::GatewayHealth {
+                ok: json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+                running: false,
+                version: json.get("server").and_then(|s| s.get("version")).and_then(|v| v.as_str()).map(String::from),
+                uptime_secs: None, channels: Vec::new(), error: None,
+            },
+            Err(_) => wsl_bridge::GatewayHealth {
+                ok: false, running: false, version: None,
+                uptime_secs: None, channels: Vec::new(),
+                error: Some("تعذر قراءة حالة Gateway".into()),
+            },
+        };
 
-    // 3. تحديد الحالة العامة
-    let overall = if !wsl_running {
-        "error".into()
-    } else if gw.ok {
-        "good".into()
-    } else {
-        "degraded".into()
-    };
+        let overall = if !wsl_running { "error" } else if gw.ok { "good" } else { "degraded" };
 
-    let channels: Vec<ChannelInfo> = gw.channels.into_iter().map(|ch| ChannelInfo {
-        name: ch.name,
-        connected: ch.connected,
-        status: ch.status,
-    }).collect();
+        let channels: Vec<ChannelInfo> = gw.channels.into_iter().map(|ch| ChannelInfo {
+            name: ch.name, connected: ch.connected, status: ch.status,
+        }).collect();
 
-    HealthSummary {
-        overall,
-        wsl: WslStatus {
-            running: wsl_running,
-            distro: if wsl_running { "Ubuntu 24.04".into() } else { "غير معروف".into() },
-        },
-        gateway: GatewayProbe {
-            reachable: gw.ok,
-            version: gw.version,
-            uptime: gw.uptime_secs.map(|s| format!("{}m", s / 60)),
-        },
-        channels,
-        active_sessions: 0,
-        diagnosis: None,
-        recommended_action: if !wsl_running {
-            Some("تشغيل WSL".into())
-        } else if !gw.ok {
-            Some("تشغيل doctor --fix وإعادة Gateway".into())
-        } else {
-            None
-        },
-    }
+        HealthSummary {
+            overall: overall.into(),
+            wsl: WslStatus {
+                running: wsl_running,
+                distro: if wsl_running { "Ubuntu 24.04".into() } else { "غير معروف".into() },
+            },
+            gateway: GatewayProbe {
+                reachable: gw.ok,
+                version: gw.version,
+                uptime: gw.uptime_secs.map(|s| format!("{}m", s / 60)),
+            },
+            channels,
+            active_sessions: 0,
+            diagnosis: None,
+            recommended_action: if !wsl_running {
+                Some("تشغيل WSL".into())
+            } else if !gw.ok {
+                Some("تشغيل doctor --fix وإعادة Gateway".into())
+            } else { None },
+        }
+    }).await.unwrap_or_else(|e| HealthSummary {
+        overall: "error".into(),
+        wsl: WslStatus { running: false, distro: format!("خطأ: {}", e) },
+        gateway: GatewayProbe { reachable: false, version: None, uptime: None },
+        channels: Vec::new(), active_sessions: 0, diagnosis: None,
+        recommended_action: Some("فشل الاتصال بـ WSL".into()),
+    })
 }
 
 /// تشخيص المشاكل
 #[tauri::command]
-pub fn run_diagnosis() -> DiagnosisResult {
-    let mut issues = Vec::new();
-    let mut fixes = Vec::new();
+pub async fn run_diagnosis() -> DiagnosisResult {
+    tokio::task::spawn_blocking(|| {
+        let mut issues = Vec::new();
+        let mut fixes = Vec::new();
 
-    // 1. فحص WSL
-    let wsl = wsl_bridge::check_wsl_status();
-    if !wsl.success {
-        issues.push("WSL غير شغال".into());
-    }
-
-    // 2. فحص Gateway
-    let gw = wsl_bridge::check_gateway_health();
-    if !gw.ok {
-        issues.push("Gateway غير مستجيب".into());
-        // جرب doctor
-        let doctor = wsl_bridge::run_openclaw_doctor();
-        if doctor.success {
-            fixes.push("تم تشغيل doctor --fix".into());
+        let wsl = wsl_bridge::exec_wsl("echo 'WSL is running' && uname -a");
+        if !wsl.success {
+            issues.push("WSL غير شغال".into());
         }
-    }
 
-    let needs_attention = !issues.is_empty();
-    let overall = if issues.is_empty() { "good".to_string() } else { "issues_found".to_string() };
+        let gw_result = wsl_bridge::exec_wsl("openclaw health --json 2>/dev/null || echo '{\"ok\":false}'");
+        let gw_ok = serde_json::from_str::<serde_json::Value>(&gw_result.stdout)
+            .map(|j| j.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+            .unwrap_or(false);
 
-    DiagnosisResult {
-        issues_found: issues,
-        fixes_applied: fixes,
-        fixes_failed: Vec::new(),
-        overall_status: overall,
-        needs_attention,
-    }
+        if !gw_ok {
+            issues.push("Gateway غير مستجيب".into());
+            let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
+            if doctor.success { fixes.push("تم تشغيل doctor --fix".into()); }
+        }
+
+        let needs_attention = !issues.is_empty();
+        let overall = if issues.is_empty() { "good".to_string() } else { "issues_found".to_string() };
+
+        DiagnosisResult {
+            issues_found: issues,
+            fixes_applied: fixes,
+            fixes_failed: Vec::new(),
+            overall_status: overall,
+            needs_attention,
+        }
+    }).await.unwrap_or_else(|e| DiagnosisResult {
+        issues_found: vec![format!("خطأ: {}", e)],
+        fixes_applied: Vec::new(), fixes_failed: Vec::new(),
+        overall_status: "error".into(), needs_attention: true,
+    })
 }
 
 /// تشغيل playbook معين
 #[tauri::command]
-pub fn run_playbook(playbook_id: String) -> String {
-    match playbook_id.as_str() {
-        "gateway-restart" => {
-            let doctor = wsl_bridge::run_openclaw_doctor();
-            if !doctor.success {
-                return format!("doctor فشل: {}", doctor.stderr);
+pub async fn run_playbook(playbook_id: String) -> String {
+    tokio::task::spawn_blocking(move || {
+        match playbook_id.as_str() {
+            "gateway-restart" => {
+                let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
+                if !doctor.success { return format!("doctor فشل: {}", doctor.stderr); }
+                let restart = wsl_bridge::exec_wsl("openclaw gateway restart 2>&1");
+                if restart.success { "✅ تم إعادة تشغيل Gateway بنجاح".into() }
+                else { format!("❌ فشل إعادة التشغيل: {}", restart.stderr) }
             }
-            let restart = wsl_bridge::restart_gateway();
-            if restart.success {
-                "✅ تم إعادة تشغيل Gateway بنجاح".into()
-            } else {
-                format!("❌ فشل إعادة التشغيل: {}", restart.stderr)
+            "run-doctor" => {
+                let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
+                if doctor.success { "✅ تم تشغيل doctor بنجاح".into() }
+                else { format!("❌ فشل doctor: {}", doctor.stderr) }
             }
+            _ => format!("❌ playbook غير معروف: {}", playbook_id),
         }
-        "run-doctor" => {
-            let doctor = wsl_bridge::run_openclaw_doctor();
-            if doctor.success {
-                "✅ تم تشغيل doctor بنجاح".into()
-            } else {
-                format!("❌ فشل doctor: {}", doctor.stderr)
-            }
-        }
-        _ => format!("❌ playbook غير معروف: {}", playbook_id),
-    }
+    }).await.unwrap_or_else(|e| format!("❌ خطأ: {}", e))
 }
