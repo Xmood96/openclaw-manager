@@ -98,36 +98,45 @@ pub struct ModelRecommendation {
 
 /// فحص شامل للنظام — يحدد المرحلة الحالية
 #[tauri::command]
-pub fn check_full_system() -> SystemStatus {
-    let wsl = check_wsl_installed();
-    let ubuntu = if wsl.installed { check_ubuntu_distro() } else { ComponentStatus {
-        installed: false, version: None, details: "WSL غير مثبت".into()
-    }};
-    let nodejs = if ubuntu.installed { check_nodejs_installed() } else { ComponentStatus {
-        installed: false, version: None, details: "Ubuntu غير مثبت".into()
-    }};
-    let openclaw = if ubuntu.installed { check_openclaw_binary() } else { ComponentStatus {
-        installed: false, version: None, details: "Ubuntu غير مثبت".into()
-    }};
-    let config = if openclaw.installed { check_openclaw_config() } else { ComponentStatus {
-        installed: false, version: None, details: "OpenClaw غير مثبت".into()
-    }};
+pub async fn check_full_system() -> SystemStatus {
+    tokio::task::spawn_blocking(move || {
+        let wsl = check_wsl_installed();
+        let ubuntu = if wsl.installed { check_ubuntu_distro() } else { ComponentStatus {
+            installed: false, version: None, details: "WSL غير مثبت".into()
+        }};
+        let nodejs = if ubuntu.installed { check_nodejs_installed() } else { ComponentStatus {
+            installed: false, version: None, details: "Ubuntu غير مثبت".into()
+        }};
+        let openclaw = if ubuntu.installed { check_openclaw_binary() } else { ComponentStatus {
+            installed: false, version: None, details: "Ubuntu غير مثبت".into()
+        }};
+        let config = if openclaw.installed { check_openclaw_config() } else { ComponentStatus {
+            installed: false, version: None, details: "OpenClaw غير مثبت".into()
+        }};
 
-    let phase = if !wsl.installed {
-        SetupPhase::NoWSL
-    } else if !ubuntu.installed {
-        SetupPhase::WSLNoDistro
-    } else if !openclaw.installed {
-        SetupPhase::DistroNoOpenClaw
-    } else if !config.installed {
-        SetupPhase::OpenClawNoConfig
-    } else {
-        // تحقق مما إذا كان Gateway شغال
-        let gw = check_gateway_process();
-        if gw { SetupPhase::OpenClawRunning } else { SetupPhase::OpenClawStopped }
-    };
+        let phase = if !wsl.installed {
+            SetupPhase::NoWSL
+        } else if !ubuntu.installed {
+            SetupPhase::WSLNoDistro
+        } else if !openclaw.installed {
+            SetupPhase::DistroNoOpenClaw
+        } else if !config.installed {
+            SetupPhase::OpenClawNoConfig
+        } else {
+            // تحقق مما إذا كان Gateway شغال
+            let gw = check_gateway_process();
+            if gw { SetupPhase::OpenClawRunning } else { SetupPhase::OpenClawStopped }
+        };
 
-    SystemStatus { overall_phase: phase, wsl, ubuntu, nodejs, openclaw, config }
+        SystemStatus { overall_phase: phase, wsl, ubuntu, nodejs, openclaw, config }
+    }).await.unwrap_or_else(|e| SystemStatus {
+        overall_phase: SetupPhase::Error(format!("فحص فاشل: {}", e)),
+        wsl: ComponentStatus { installed: false, version: None, details: String::new() },
+        ubuntu: ComponentStatus { installed: false, version: None, details: String::new() },
+        nodejs: ComponentStatus { installed: false, version: None, details: String::new() },
+        openclaw: ComponentStatus { installed: false, version: None, details: String::new() },
+        config: ComponentStatus { installed: false, version: None, details: String::new() },
+    })
 }
 
 /// ابحث عن wsl.exe في المسارات المعروفة
