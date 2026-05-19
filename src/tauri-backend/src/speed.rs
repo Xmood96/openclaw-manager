@@ -23,29 +23,24 @@ pub struct ChannelSnap {
     pub status: String,
 }
 
-/// يشغل سكربت واحد في WSL يرجع كل المعلومات كـ JSON — طلقة واحدة بدل 8 طلقات
+/// أمر واحد في WSL — طلقة وحدة تجيب كل شي
 pub fn take_snapshot() -> SystemSnapshot {
-    // سكربت bash واحد يجمع كل شيء
+    // سكربت bash واحد
     let script = r#"
-# كل الفحوصات في أمر واحد
-WSLOK=true
-# فحص Gateway
 GW=$(openclaw health --json 2>/dev/null)
 GWOK=false
 GWVER=""
 GW_SESSIONS=0
-GW_PID=""
-if echo "$GW" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+GW_PID=0
+if echo "$GW" | grep -q '"ok".*true'; then
   GWOK=true
-  GWVER=$(echo "$GW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('server',{}).get('version',''))" 2>/dev/null)
-  GW_SESSIONS=$(pgrep -cf 'openclaw.*session' 2>/dev/null || echo 0)
+  GWVER=$(echo "$GW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('server',{}).get('version',''))" 2>/dev/null || echo "")
+  GW_SESSIONS=$(pgrep -cf 'openclaw' 2>/dev/null || echo 0)
   GW_PID=$(pgrep -f 'openclaw gateway' 2>/dev/null | head -1 || echo 0)
 fi
-# Node
 NODE=$(node --version 2>/dev/null || echo "")
-# OpenClaw
 OC=$(openclaw --version 2>/dev/null | head -1 | grep -oP '[\d]+\.[\d]+\.[\d]+' || echo "")
-echo "{\"wsl_ok\":$WSLOK,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version\":\"$GWVER\",\"gateway_pid\":$GW_PID,\"channels\":[],\"active_sessions\":$GW_SESSIONS,\"node_version\":\"$NODE\",\"openclaw_version\":\"$OC\"}"
+echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version\":\"$GWVER\",\"gateway_pid\":$GW_PID,\"channels\":[],\"active_sessions\":$GW_SESSIONS,\"node_version\":\"$NODE\",\"openclaw_version\":\"$OC\"}"
 "#;
 
     let output = std::process::Command::new("wsl.exe")
@@ -59,14 +54,16 @@ echo "{\"wsl_ok\":$WSLOK,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_versi
                 let json_str = &stdout[start..];
                 if let Some(end) = json_str.rfind('}') {
                     let clean = &json_str[..=end];
-                    return serde_json::from_str::<SystemSnapshot>(clean)
-                        .unwrap_or_else(|_| SystemSnapshot {
+                    match serde_json::from_str::<SystemSnapshot>(clean) {
+                        Ok(snap) => return snap,
+                        Err(e) => return SystemSnapshot {
                             wsl_ok: true, ubuntu_ok: false, gateway_ok: false,
                             gateway_version: None, gateway_pid: None,
                             channels: vec![], active_sessions: 0,
                             node_version: None, openclaw_version: None,
-                            error: Some(format!("JSON parse error: {}", clean)),
-                        });
+                            error: Some(format!("JSON parse: {} — raw: {}", e, clean)),
+                        },
+                    }
                 }
             }
             SystemSnapshot {
@@ -74,7 +71,7 @@ echo "{\"wsl_ok\":$WSLOK,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_versi
                 ubuntu_ok: false, gateway_ok: false, gateway_version: None,
                 gateway_pid: None, channels: vec![], active_sessions: 0,
                 node_version: None, openclaw_version: None,
-                error: Some(format!("No JSON in output: {}", stdout)),
+                error: Some(format!("No JSON: {}", stdout)),
             }
         }
         Err(e) => SystemSnapshot {
@@ -90,7 +87,7 @@ echo "{\"wsl_ok\":$WSLOK,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_versi
 pub fn start_gateway() -> Result<String, String> {
     let output = std::process::Command::new("wsl.exe")
         .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | grep -q '\"ok\":true' && echo 'OK' || echo 'FAIL'"])
+            "openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | grep -q '\"ok\".*true' && echo 'OK' || echo 'FAIL'"])
         .output();
 
     match output {
