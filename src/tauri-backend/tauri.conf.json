@@ -45,23 +45,7 @@
   },
   "plugins": {
     "shell": {
-      "open": true,
-      "scope": [
-        {
-          "name": "wsl-exec",
-          "cmd": "wsl.exe",
-          "args": [
-            { "validator": ".*" }
-          ]
-        },
-        {
-          "name": "powershell",
-          "cmd": "powershell.exe",
-          "args": [
-            { "validator": ".*" }
-          ]
-        }
-      ]
+      "open": true
     }
   }
 }
