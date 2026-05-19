@@ -130,23 +130,52 @@ pub fn check_full_system() -> SystemStatus {
     SystemStatus { overall_phase: phase, wsl, ubuntu, nodejs, openclaw, config }
 }
 
+/// ابحث عن wsl.exe في المسارات المعروفة
+fn find_wsl() -> Option<String> {
+    let paths = [
+        "wsl.exe",
+        r"C:\Windows\System32\wsl.exe",
+        r"C:\Windows\Sysnative\wsl.exe",
+    ];
+    for p in &paths {
+        if std::path::Path::new(p).exists() || Command::new(p).arg("--version").output().is_ok() {
+            return Some(p.to_string());
+        }
+    }
+    None
+}
+
 /// فحص WSL
 fn check_wsl_installed() -> ComponentStatus {
-    let output = Command::new("wsl.exe")
-        .args(["--status"])
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+
+    // جرب wsl --version أولاً (الأكثر توافقًا)
+    let output = Command::new(&wsl_exe)
+        .args(["--version"])
         .output();
 
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
-            let details = format!("{}{}", stdout, stderr);
-            let installed = out.status.success();
+            let combined = format!("{}{}", stdout, stderr);
+            // WSL موجود إذا لقينا "WSL version" أو "kernel" في المخرجات
+            let installed = combined.contains("WSL") || combined.contains("kernel");
 
-            ComponentStatus {
-                installed,
-                version: if installed { extract_version(&stdout, "WSL") } else { None },
-                details,
+            if installed {
+                let version = stdout.lines()
+                    .find(|l| l.contains("WSL"))
+                    .map(|l| l.trim().to_string());
+                ComponentStatus { installed: true, version, details: combined }
+            } else {
+                // جرب wsl --status كخطة بديلة
+                let output2 = Command::new(&wsl_exe).args(["--status"]).output();
+                if let Ok(out2) = output2 {
+                    let s = String::from_utf8_lossy(&out2.stdout);
+                    ComponentStatus { installed: out2.status.success(), version: None, details: s.to_string() }
+                } else {
+                    ComponentStatus { installed: false, version: None, details: "WSL غير موجود".into() }
+                }
             }
         }
         Err(e) => ComponentStatus {
@@ -159,18 +188,33 @@ fn check_wsl_installed() -> ComponentStatus {
 
 /// فحص توزيعة Ubuntu
 fn check_ubuntu_distro() -> ComponentStatus {
-    let output = Command::new("wsl.exe")
-        .args(["-l", "-v"])
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+
+    // wsl -l -q يعطي قائمة بالتوزيعات (سطر واحد لكل توزيعة)
+    let output = Command::new(&wsl_exe)
+        .args(["-l", "-q"])
         .output();
 
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let has_ubuntu = stdout.contains("Ubuntu") || stdout.contains("ubuntu");
+            // نحول لـ lowercase عشان المقارنة
+            let lower = stdout.to_lowercase();
+            let has_ubuntu = lower.contains("ubuntu");
+
+            // نجيب اسم التوزيعة بالضبط (للأوامر اللاحقة)
+            let distro_name = if has_ubuntu {
+                stdout.lines()
+                    .find(|l| l.to_lowercase().contains("ubuntu"))
+                    .map(|l| l.trim().to_string())
+            } else {
+                None
+            };
+
             ComponentStatus {
                 installed: has_ubuntu,
-                version: None,
-                details: stdout.to_string(),
+                version: distro_name,
+                details: stdout,
             }
         }
         Err(e) => ComponentStatus {
