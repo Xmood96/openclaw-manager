@@ -49,7 +49,7 @@ pub async fn export_diagnostics() -> DiagnosticReport {
         recs.push("إعادة تشغيل WSL: wsl --shutdown ثم wsl -d Ubuntu".into());
     }
 
-    if !health.ok {
+    if !health_ok {
         errors.push("Gateway لا يستجيب".into());
         recs.push("تشغيل openclaw doctor --fix ثم openclaw gateway restart".into());
     }
