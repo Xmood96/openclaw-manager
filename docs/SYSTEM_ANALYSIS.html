@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<title>OpenClaw Manager — تحليل شامل للنظام</title>
+<style>
+@page { size: A4; margin: 11mm 12mm; }
+:root{--primary:#075985;--secondary:#0f766e;--accent:#f59e0b;--ink:#172033;--muted:#64748b;--line:#dbe7ef;--card:#fff;--soft:#e0f2fe;--dark:#0f172a;}
+*{box-sizing:border-box} body{margin:0;font-family:'DejaVu Sans','Ubuntu Sans',Arial,sans-serif;color:var(--ink);background:#fff;line-height:1.72;font-size:12.9px;direction:rtl;}
+.page{break-after:page;page-break-after:always;position:relative;padding:3mm 2mm}.page:last-child{break-after:auto;page-break-after:auto}
+.cover{min-height:260mm;padding:26mm 18mm 18mm;background:radial-gradient(circle at 15% 18%,rgba(14,165,233,.25),transparent 30%),radial-gradient(circle at 92% 12%,rgba(20,184,166,.24),transparent 24%),linear-gradient(135deg,#f8fbff 0%,#eef9ff 45%,#e7fff8 100%);border-radius:18px;overflow:hidden}.cover:before{content:"";position:absolute;inset:12mm;border:1.5px solid rgba(7,89,133,.18);border-radius:20px}.badge{display:inline-block;background:rgba(7,89,133,.10);border:1px solid rgba(7,89,133,.25);color:var(--primary);padding:6px 14px;border-radius:999px;font-weight:700}.logo-circle{width:92px;height:92px;border-radius:28px;background:linear-gradient(135deg,var(--primary),var(--secondary));display:flex;align-items:center;justify-content:center;color:#fff;font-size:35px;font-weight:800;box-shadow:0 18px 45px rgba(7,89,133,.22);margin-bottom:24px}.cover h1{font-size:32px;line-height:1.45;margin:18px 0 8px;color:var(--primary)}.cover h2{font-size:19px;margin:0;color:var(--secondary)}.subtitle{margin-top:20px;font-size:16px;max-width:640px;color:#334155}.cover-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:34px}.cover-card{background:rgba(255,255,255,.78);border:1px solid rgba(7,89,133,.14);padding:14px;border-radius:16px;box-shadow:0 8px 24px rgba(15,23,42,.06)}
+h1{font-size:22px;color:var(--primary);border-bottom:2px solid var(--line);padding-bottom:7px;margin:0 0 14px}h2{font-size:18px;color:var(--primary);margin:20px 0 9px}h3{font-size:15px;color:var(--secondary);margin:14px 0 8px}p{margin:0 0 10px}.kicker{color:var(--secondary);font-weight:800;letter-spacing:.5px;font-size:12px;margin-bottom:5px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:11px 13px;margin:9px 0;box-shadow:0 8px 22px rgba(15,23,42,.045)}.accent-card{background:linear-gradient(135deg,#eef9ff,#f7fffb);border-color:#bae6fd}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;margin:2px;background:#e0f2fe;color:#075985;font-weight:700;font-size:11px}ul{margin:5px 0 8px;padding-right:20px}li{margin:4px 0}table{width:100%;border-collapse:separate;border-spacing:0;margin:10px 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}th{background:linear-gradient(135deg,var(--primary),#0e7490);color:#fff;font-weight:800;padding:7px;border-left:1px solid rgba(255,255,255,.25)}td{padding:6px;border-top:1px solid var(--line);border-left:1px solid var(--line);vertical-align:top}tr:nth-child(even) td{background:#f8fafc}.code{direction:ltr;text-align:left;unicode-bidi:embed;background:#0f172a;color:#e5eefc;border-radius:14px;padding:13px 15px;font-family:'DejaVu Sans Mono',monospace;font-size:10.8px;line-height:1.55;white-space:pre-wrap;border:1px solid #243044}.diagram,.figure{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px;margin:12px 0;box-shadow:0 8px 22px rgba(15,23,42,.045)}.caption{font-size:11px;color:var(--muted);text-align:center;margin-top:5px}.note{background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;border-radius:14px;padding:11px 13px;margin:10px 0}.success{background:#ecfdf5;border:1px solid #bbf7d0;color:#14532d;border-radius:14px;padding:11px 13px;margin:10px 0}.en{direction:ltr;text-align:left;unicode-bidi:embed}.watermark{position:absolute;bottom:8mm;left:13mm;color:#94a3b8;font-size:10px}
+</style>
+</head>
+<body>
+<section class="page cover"><div class="logo-circle">PDF</div><span class="badge">Academic Documentation</span><h1>OpenClaw Manager — تحليل شامل للنظام</h1><h2>System Analysis Document \| SaaS Product Architecture</h2><p class="subtitle">Ahmed \| Team</p><div class="cover-grid"><div class="cover-card"><b>Document Type</b><br/>Academic / Technical Report</div><div class="cover-card"><b>Layout</b><br/>A4 printable, colored cover, cards, tables, and code blocks</div><div class="cover-card"><b>Typography</b><br/>Arabic-friendly fonts with mixed RTL/LTR support</div><div class="cover-card"><b>Generation</b><br/>HTML to PDF using local Chromium/Puppeteer</div></div></section>
+<section class="page"><div class="kicker">DOCUMENT</div><h1>OpenClaw Manager — تحليل شامل للنظام</h1>
+<p>&gt; **System Analysis Document** &gt; وثيقة تحليل نظام متكامل لمنتج إدارة OpenClaw للمستخدم العادي عبر تطبيق Windows (Tauri)</p>
+<p>---</p>
+<h2>جدول المحتويات</h2>
+<ul><li>[مقدمة وملخص تنفيذي](#1-مقدمة-وملخص-تنفيذي)</li><li>[هدف المشروع](#2-هدف-المشروع)</li><li>[الجمهور المستهدف](#3-الجمهور-المستهدف)</li><li>[المعمارية العامة للنظام](#4-المعمارية-العامة-للنظام)</li><li>[المكونات بالتفصيل](#5-المكونات-بالتفصيل)</li><li>[سير العمل والتدفقات](#6-سير-العمل-والتدفقات)</li><li>[Firebase — الهيكل والتكامل](#7-firebase--الهيكل-والتكامل)</li><li>[نظام الـ AI Error Recovery](#8-نظام-الـ-ai-error-recovery)</li><li>[الأمن والخصوصية](#9-الأمن-والخصوصية)</li><li>[خريطة الطريق (Roadmap)](#10-خريطة-الطريق-roadmap)</li><li>[المخاطر والتخفيف](#11-المخاطر-والتخفيف)</li></ul>
+<p>---</p>
+<h2>1. مقدمة وملخص تنفيذي</h2>
+<h3>1.1 نظرة عامة</h3>
+<p>OpenClaw هو مساعد شخصي مفتوح المصدر ذكي، لكنه يتطلب تنصيبًا يدويًا وإدارة تقنية متقدمة. عندما يواجه المستخدم العادي مشكلة، يضطر للعودة إلى المطور. هذا يُنشئ عنق زجاجة ويمنع التوسع.</p>
+<p>**OpenClaw Manager** هو منتج SaaS يبني طبقة إدارة ذكية فوق OpenClaw، تسمح لأي مستخدم عادي باستخدام OpenClaw دون الحاجة إلى خبرة تقنية، مع نظام ذكاء اصطناعي مدمج يشخص ويحل المشاكل تلقائيًا.</p>
+<h3>1.2 الفروقات الرئيسية عن OpenClaw الخام</h3>
+<p>| الميزة | OpenClaw الخام | OpenClaw Manager | |--------|----------------|------------------| | التنصيب | سطر أوامر يدوي | تطبيق Windows بنقرة واحدة | | الإدارة | عبر CLI/Control UI (تقنية) | واجهة مبسطة | | حل المشاكل | يحتاج مطور | AI Agent يصلح تلقائيًا | | تتبع الاستهلاك | يدوي | لوحة تحكم + Firestore | | إدارة المستخدمين | لا يوجد | Firebase Auth + Admin Panel | | الأجهزة | مفتوح | جهاز واحد لكل مستخدم |</p>
+<h3>1.3 البيان المعماري (Problem Statement)</h3>
+<p>&gt; **&quot;للاستفادة من OpenClaw، يحتاج المستخدم إلى تثبيت يدوي، إدارة عبر CLI، وعند أي عطل يجب أن يعود للمطور. منتجنا يبني طبقة SaaS فوق OpenClaw تسمح لأي مستخدم عادي بنصبه واستخدامه وإدارته، مع AI agent يكتشف ويشخص ويحل 90%+ من المشاكل تلقائيًا.&quot;**</p>
+<p>---</p>
+<h2>2. هدف المشروع</h2>
+<h3>2.1 الأهداف الرئيسية</h3>
+<ul><li>**GOAL-1:** إنشاء تطبيق Windows أصلي (Tauri) يثبت ويدير OpenClaw</li><li>**GOAL-2:** توفير لوحة تحكم مرئية لحالة المساعد والقنوات والموديلات</li><li>**GOAL-3:** بناء AI Error Agent يشخص ويصلح مشاكل OpenClaw تلقائيًا</li><li>**GOAL-4:** نظام SaaS مع Firebase Auth يتتبع المستخدمين والاشتراكات</li><li>**GOAL-5:** ربط جهاز واحد لكل مستخدم مع إمكانية تعطيل الحساب من بعد</li></ul>
+<h3>2.2 مؤشرات النجاح (KPIs)</h3>
+<ul><li>وقت تثبيت OpenClaw للمستخدم العادي: &lt; 5 دقائق</li><li>نسبة المشاكل التي يحلها AI Error Agent: &gt; 85%</li><li>وقت الاستجابة للمشاكل: &gt; دقيقة (تلقائي)</li><li>عدد الزيارات للمطور بخصوص مشاكل التشغيل: صفر</li></ul>
+<p>---</p>
+<h2>3. الجمهور المستهدف</h2>
+<h3>3.1 الشخصيات المستهدفة</h3>
+<ul><li>**المستخدم العادي (Non-Technical User):**</li><li>ليس لديه خبرة في CLI/Linux</li><li>يريد مساعد شخصي يعمل فور تثبيته</li><li>لا يعرف ما هو WSL</li><li>يتوقع تجربة &quot;Install &amp; Forget&quot;</li></ul>
+<ul><li>**المستخدم شبه التقني (Prosumer):**</li><li>يعرف أساسيات الكمبيوتر</li><li>قد يكون جرب ChatGPT/web</li><li>يريد تحكمًا بسيطًا في الموديلات</li><li>مهتم بالتكلفة والاستهلاك</li></ul>
+<h3>3.2 متطلبات المستخدم</h3>
+<ul><li>واجهة بالعربية (أساسي) والإنجليزية</li><li>أزرار كبيرة وواضحة — لا أوامر نصية</li><li>تحديث الحالة فوري (Online/Offline/Error)</li><li>تنبيهات عند حدوث مشكلة</li><li>&quot;Fix&quot; زر واحد لحل المشكلة</li></ul>
+<p>---</p>
+<h2>4. المعمارية العامة للنظام</h2>
+<h3>4.1 طبقات النظام (System Layers)</h3>
+<pre class="code"><code>┌──────────────────────────────────────────────────────────┐
+│                  SaaS Cloud Layer                         │
+│  ┌────────────────┐  ┌──────────────────────────────┐    │
+│  │ Firebase Auth   │  │ Firestore (Users, Devices,  │    │
+│  │ (Email/Password)│  │ Usage, Subscriptions)       │    │
+│  └───────┬────────┘  └──────────┬───────────────────┘    │
+│          │                      │                         │
+│  ┌───────┴──────────────────────┴───────────────────┐    │
+│  │          Admin Web Panel (React)                  │    │
+│  │  - User list &amp; management                         │    │
+│  │  - Disable/Enable accounts                        │    │
+│  │  - Usage analytics                                │    │
+│  └──────────────────────────────────────────────────┘    │
+└───────────────────────────┬──────────────────────────────┘
+                            │ REST + WebSocket
+┌───────────────────────────┴──────────────────────────────┐
+│              Windows Desktop (Tauri v2)                   │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │              UI Layer (React/Lit)                    │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │  │
+│  │  │Dashboard │ │Channels  │ │ Model/Cost       │   │  │
+│  │  │   Status │ │   Manager│ │   Monitor         │   │  │
+│  │  ├──────────┤ ├──────────┤ ├──────────────────┤   │  │
+│  │  │ Logs /   │ │ AI Error │ │ Settings/Account │   │  │
+│  │  │Diagnostic│ │  Chat    │ │                  │   │  │
+│  │  └──────────┘ └──────────┘ └──────────────────┘   │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │           Tauri Rust Backend (Core)                 │  │
+│  │                                                    │  │
+│  │  ┌────────────────────────────────────────────┐   │  │
+│  │  │        WSL Bridge Module                     │   │  │
+│  │  │  wsl.exe -d &lt;distro&gt; -- &lt;command&gt;           │   │  │
+│  │  │  Parse JSON/Text output                     │   │  │
+│  │  └────────────────────────────────────────────┘   │  │
+│  │                                                    │  │
+│  │  ┌────────────────────────────────────────────┐   │  │
+│  │  │     OpenClaw WebSocket Client               │   │  │
+│  │  │  ws://127.0.0.1:18789                      │   │  │
+│  │  │  Gateway Protocol (connect/RPC/events)      │   │  │
+│  │  └────────────────────────────────────────────┘   │  │
+│  │                                                    │  │
+│  │  ┌────────────────────────────────────────────┐   │  │
+│  │  │     Firebase SDK Integration                │   │  │
+│  │  │  Auth + Firestore + Analytics              │   │  │
+│  │  └────────────────────────────────────────────┘   │  │
+│  │                                                    │  │
+│  │  ┌────────────────────────────────────────────┐   │  │
+│  │  │     Error Recovery Orchestrator             │   │  │
+│  │  │  Detection → Diagnosis → Fix → Report      │   │  │
+│  │  └────────────────────────────────────────────┘   │  │
+│  └────────────────────────────────────────────────────┘  │
+└───────────────────────────┬──────────────────────────────┘
+                            │ WSL Interop
+┌───────────────────────────┴──────────────────────────────┐
+│           WSL 2 — Ubuntu 24.04                           │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │        OpenClaw Gateway (systemd service)           │  │
+│  │  /usr/bin/openclaw gateway --port 18789            │  │
+│  │  ~/.openclaw/openclaw.json                         │  │
+│  └────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │        Maintenance Agent (OpenClaw Agent)           │  │
+│  │  agent &quot;maintenance&quot; with tools                    │  │
+│  │  - run_health, run_doctor, read_logs               │  │
+│  │  - restart_gateway, reconnect_channel              │  │
+│  │  - diagnose_issue, apply_fix                       │  │
+│  └────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │        Monitoring Scripts (Cron)                    │  │
+│  │  - Every 5 min: health check                       │  │
+│  │  - Log rotation                                    │  │
+│  │  - Auto-update check                               │  │
+│  └────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘</code></pre>
+<h3>4.2 مبادئ التصميم (Design Principles)</h3>
+<ul><li>**Fail-Safe Pyramid:** كل طبقة لها fallback للطبقة التي تحتها</li><li>**Self-Healing by Default:** النظام يحاول الإصلاح قبل إزعاج المستخدم</li><li>**Single Device Binding:** حساب واحد = جهاز واحد</li><li>**Offline-First:** التطبيق يعمل حتى لو انقطع الإنترنت (للمهام المحلية)</li><li>**Observable Always:** المستخدم يرى حالة كل شيء في أي وقت</li></ul>
+<p>---</p>
+<h2>5. المكونات بالتفصيل</h2>
+<h3>5.1 Windows Application (Tauri)</h3>
+<h4>5.1.1 التقنيات</h4>
+<p>| التقنية | الدور | |---------|-------| | **Tauri v2** | إطار تطبيق سطح المكتب (Rust + Web UI) | | **React / Lit** | واجهة المستخدم | | **Rust** | business logic, WSL bridge, Firebase SDK | | **serde + serde_json** | تحليل JSON من WSL/OpenClaw | | **tauri-plugin-shell** | تشغيل أوامر WSL/shell | | **reqwest** | HTTP calls لـ Firebase REST API |</p>
+<h4>5.1.2 نوافذ التطبيق</h4>
+<ul><li>**Dashboard (الصفحة الرئيسية)**</li></ul>
+<pre class="code"><code>   ┌────────────────────────────────────────────┐
+   │ 🔵 OpenClaw Manager    [Settings] [Logout] │
+   ├────────────────────────────────────────────┤
+   │                                            │
+   │  ┌──── Gateway ────┐  ┌── Channels ────┐  │
+   │  │ 🟢 Running      │  │ 📱 WhatsApp: ✅│  │
+   │  │ Uptime: 2d 4h   │  │ 💬 Telegram: ✅│  │
+   │  │ RAM: 142MB      │  │ 🔊 Discord: ❌ │  │
+   │  │ Version: 2026.5 │  │   [Reconnect]  │  │
+   │  └─────────────────┘  └────────────────┘  │
+   │                                            │
+   │  ┌── Model Usage ──┐  ┌── Sessions ────┐  │
+   │  │ Sonnet: 1.2K tks│  │ Active: 3      │  │
+   │  │ GPT: 800 tks    │  │ Today: 47 msgs │  │
+   │  │ GPT Cost: $0.24 │  │                 │  │
+   │  └─────────────────┘  └────────────────┘  │
+   │                                            │
+   │  [🔧 AI Error Assistant]  [📋 Full Logs]  │
+   └────────────────────────────────────────────┘</code></pre>
+<ul><li>**AI Error Assistant**</li></ul>
+<pre class="code"><code>   ┌────────────────────────────────────────────┐
+   │  🤖 AI Error Assistant                     │
+   ├────────────────────────────────────────────┤
+   │                                            │
+   │  ┌────────────────────────────────────┐   │
+   │  │ 🔍 System Check:                   │   │
+   │  │ ✅ Gateway reachable               │   │
+   │  │ ❌ WhatsApp disconnected           │   │
+   │  │ ✅ Telegram connected              │   │
+   │  │ ...                                │   │
+   │  └────────────────────────────────────┘   │
+   │                                            │
+   │  📝 Diagnosis:                             │
+   │  &quot;WhatsApp جلسة الأمان انتهت...&quot;           │
+   │                                            │
+   │  [🔄 Fix: Reconnect WhatsApp]              │
+   │                                            │
+   │  ┌── Chat History ──────────────────┐     │
+   │  │ 🟢 [12:00] Fix: تم إعادة الربط   │     │
+   │  │ 🔴 [11:45] Error: WhatsApp off   │     │
+   │  └──────────────────────────────────┘     │
+   └────────────────────────────────────────────┘</code></pre>
+<ul><li>**Channels Manager**</li></ul>
+<pre class="code"><code>   ┌────────────────────────────────────────────┐
+   │  📡 Channel Configuration                  │
+   ├────────────────────────────────────────────┤
+   │                                            │
+   │  ┌── WhatsApp ──────────────────────────┐  │
+   │  │ Status: ✅ Connected                 │  │
+   │  │ Phone: +9665xxxxxxxx                 │  │
+   │  │ [QR Login]  [Disconnect]             │  │
+   │  └──────────────────────────────────────┘  │
+   │                                            │
+   │  ┌── Telegram ──────────────────────────┐  │
+   │  │ Status: ✅ Connected                 │  │
+   │  │ Bot: @MyAssistantBot                 │  │
+   │  │ [Change Token]  [Disconnect]         │  │
+   │  └──────────────────────────────────────┘  │
+   │                                            │
+   │  [➕ Add Channel]                          │
+   └────────────────────────────────────────────┘</code></pre>
+<ul><li>**Model Monitor**</li></ul>
+<pre class="code"><code>   ┌────────────────────────────────────────────┐
+   │  📊 Model Usage &amp; Costs                    │
+   ├────────────────────────────────────────────┤
+   │                                            │
+   │  Today Usage                               │
+   │  ┌────────────────────────────────────┐   │
+   │  │ ████████░░░░ Claude Sonnet 1.2K   │   │
+   │  │ ████░░░░░░░ GPT-4o         800    │   │
+   │  │ ██░░░░░░░░░ Embedding      150    │   │
+   │  └────────────────────────────────────┘   │
+   │                                            │
+   │  Current Model: claude-sonnet-4-6          │
+   │  [Switch Model ▾]                          │
+   │                                            │
+   │  Cost Today: $0.42                         │
+   │  Cost This Month: $8.15                    │
+   │  Cost Limit: 💰 $20/month [Set Limit]     │
+   └────────────────────────────────────────────┘</code></pre>
+<ul><li>**Settings / Account**</li></ul>
+<pre class="code"><code>   ┌────────────────────────────────────────────┐
+   │  ⚙️ Settings &amp; Account                     │
+   ├────────────────────────────────────────────┤
+   │                                            │
+   │  Account: ahmed@email.com                  │
+   │  Device: XmooD-PC                         │
+   │  Status: ✅ Active                         │
+   │                                            │
+   │  ── OpenClaw Settings ──                   │
+   │  Model: [claude-sonnet-4-6 ▾]             │
+   │  API Key: [••••••••] [Change]              │
+   │  Auto-Update: [✅]                         │
+   │  Language: [العربية ▾]                    │
+   │                                            │
+   │  [Restart Gateway] [Run Doctor]           │
+   │  [Export Diagnostics]                      │
+   └────────────────────────────────────────────┘</code></pre>
+<h3>5.2 WSL Bridge Module</h3>
+<h4>5.2.1 الوظائف الأساسية</h4>
+<p>| الدالة | WSL Command | التردد | |--------|-------------|--------| | `check_wsl_status()` | `wsl.exe --status` | كل 30 ثانية | | `check_gateway()` | `wsl -d Ubuntu -- openclaw health --json` | كل 30 ثانية | | `check_gateway_status()` | `wsl -d Ubuntu -- openclaw gateway status --json` | كل دقيقة | | `run_doctor()` | `wsl -d Ubuntu -- openclaw doctor --fix --non-interactive` | عند الطلب | | `restart_gateway()` | `wsl -d Ubuntu -- openclaw gateway restart` | عند الطلب | | `read_logs()` | `wsl -d Ubuntu -- bash -c &quot;tail -200 /tmp/openclaw/*.log&quot;` | عند الطلب | | `install_openclaw()` | سكربت تنصيب | أول مرة | | `restart_wsl()` | `wsl.exe --shutdown` | كحل أخير |</p>
+<h4>5.2.2 معالجة الأخطاء في WSL Bridge</h4>
+<pre class="code"><code>حالة WSL:
+  ├── Running → متابعة
+  ├── Stopped → wsl -d Ubuntu
+  ├── Installing → مؤشر تثبيت
+  └── Error → إعادة تعيين WSL
+
+حالة Gateway:
+  ├── Reachable عبر WS → اتصال مباشر
+  ├── Process not running → restart gateway
+  ├── Doctor needed → run doctor --fix
+  └── Fatal → restart WSL</code></pre>
+<h3>5.3 OpenClaw Gateway Integration</h3>
+<p>التطبيق يتصل مع Gateway بطريقتين:</p>
+<h4>الطريقة الأولى: WebSocket RPC (المفضلة)</h4>
+<pre class="code"><code>Tauri → ws://127.0.0.1:18789 → connect → chat.send → agent maintenance
+
+Response events: agent events with tool execution results</code></pre>
+<ul><li>يرسل أوامر مباشرة لـ agent `maintenance`</li><li>يستقبل تحديثات فورية (Presence, Health, Session events)</li><li>يوفر chat UI للـ AI Error Assistant</li></ul>
+<h4>الطريقة الثانية: WSL CLI (Fallback)</h4>
+<pre class="code"><code>Tauri → wsl -d Ubuntu -- openclaw health --json
+     → wsl -d Ubuntu -- openclaw config get agents</code></pre>
+<ul><li>يستخدم عندما Gateway بايظ</li><li>أبطأ ويحتاج parse النتائج</li><li>لكنه يعمل دائمًا</li></ul>
+<h4>5.3.1 هيكل الـ Maintenance Agent</h4>
+<pre class="code"><code>// تضاف إلى openclaw.json
+{
+  agents: {
+    list: [{
+      id: &quot;maintenance&quot;,
+      name: &quot;مساعد الصيانة&quot;,
+      model: {
+        primary: &quot;anthropic/claude-sonnet-4-6&quot;,
+      },
+      tools: {
+        scriptbox: { enabled: true },  // لتشغيل scripts آمنة
+      },
+      skills: [&quot;maintenance-skills&quot;],
+      prompt: `أنت مساعد صيانة OpenClaw.
+مهمتك تشخيص وحل مشاكل النظام.
+لديك الأدوات التالية:
+- run_health_check: يجري openclaw health --json
+- run_doctor: يجري openclaw doctor --fix
+- read_gateway_logs: يقرأ آخر logs
+- restart_gateway: يعيد تشغيل Gateway
+- reconnect_channel(channel): يعيد ربط قناة
+- get_config(path): يقرأ إعدادات
+- run_diagnostics: يصدر تقرير تشخيص
+
+قاعدة التشخيص:
+1. افحص health أولاً
+2. إذا فشل → افحص logs
+3. إذا وجدت خطأ → استخدم doctor --fix
+4. إذا استمر → افحص config
+5. إذا فشل كل شيء → restart gateway
+6. إذا فشل → اصدر diagnostics وابلغ المستخدم`,
+    }],
+  },
+}</code></pre>
+<h3>5.4 Error Recovery Orchestrator</h3>
+<h4>5.4.1 Fallback Pyramid</h4>
+<pre class="code"><code>                🟢 LEVEL 1: Gateway RPC
+  OpenClaw Gateway يعمل ← chat.send → maintenance agent
+                │
+                │ Gateway disconnected
+                ▼
+                🟡 LEVEL 2: WSL CLI
+  WSL يعمل ← wsl openclaw health, wsl openclaw doctor
+                │
+                │ Gateway won't start
+                ▼
+                🟠 LEVEL 3: WSL Reset
+  ← wsl --shutdown → wsl → إعادة تشغيل OpenClaw
+                │
+                │ WSL corrupt
+                ▼
+                🔴 LEVEL 4: PowerShell Recovery
+  ← إعادة تثبيت WSL ← إعادة تثبيت OpenClaw
+                │
+                │ Everything failed
+                ▼
+                💀 ESCALATION: Developer Alert
+  ← تصدير diagnostics ← إشعار للمطور</code></pre>
+<h4>5.4.2 Playbooks الجاهزة</h4>
+<p>**Playbook: WhatsApp Disconnected**</p>
+<pre class="code"><code>1. Detect: health check → channel=whatsapp, status=failure
+2. Diagnose: read logs → &quot;WhatsApp session expired&quot;
+3. Fix strategy:
+   a. Run: wsl openclaw channels logout --channel whatsapp
+   b. Open QR modal in Tauri
+   c. Run: wsl openclaw channels login --channel whatsapp
+   d. Wait for QR, display in UI
+4. Verify: re-run health check
+5. Report: &quot;تم إعادة ربط واتساب، يرجى مسح QR&quot;</code></pre>
+<p>**Playbook: Gateway Not Responding**</p>
+<pre class="code"><code>1. Detect: WS connect timeout
+2. Diagnose: wsl openclaw gateway status
+   - If &quot;not running&quot; → start
+   - If &quot;crashed&quot; → check logs → doctor
+3. Fix:
+   a. wsl openclaw doctor --fix --non-interactive
+   b. wsl openclaw gateway restart
+   c. Wait 10s, retry WS connection
+4. Verify: openclaw health --json
+5. If still down → level 3 (WSL reset)</code></pre>
+<p>**Playbook: Out of Memory / High Resource Usage**</p>
+<pre class="code"><code>1. Detect: health check → memory &gt; 500MB
+2. Diagnose: log analysis
+3. Fix:
+   a. Check which sessions are active
+   b. [Optional] Restart gateway
+   c. Apply resource limits if configured
+4. Verify: re-check memory</code></pre>
+<p>---</p>
+<h2>6. سير العمل والتدفقات</h2>
+<h3>6.1 التدفق الرئيسي للمستخدم</h3>
+<pre class="code"><code>┌─────────────┐
+│ تنزيل التطبيق│
+│ من الموقع    │
+└──────┬──────┘
+       ▼
+┌─────────────┐
+│ تشغيل التطبيق│
+│ Installer     │
+└──────┬──────┘
+       ▼
+┌──────────────────────┐
+│فحص WSL: موجود؟       │
+│← لا → Install WSL    │
+│← نعم → متابعة        │
+└──────┬──────────────┘
+       ▼
+┌──────────────────────┐
+│فحص OpenClaw: موجود؟  │
+│← لا → تنصيب تلقائي   │
+│← نعم → متابعة        │
+└──────┬──────────────┘
+       ▼
+┌──────────────────────┐
+│  شاشة الترحيب         │
+│  [Sign Up / Sign In] │
+└──────┬──────────────┘
+       ▼
+┌──────────────────────┐
+│    تسجيل الدخول       │
+│  Firebase Auth       │
+│  Email + Password    │
+└──────┬──────────────┘
+       ▼
+┌──────────────────────┐
+│  ربط الجهاز           │
+│  Device Fingerprint  │
+│  + Firebase Check    │
+│  ← جهاز واحد فقط    │
+└──────┬──────────────┘
+       ▼
+┌──────────────────────┐
+│ شاشة Channels Setup  │
+│ ← ربط WhatsApp QR   │
+│ ← ربط Telegram Bot  │
+│ ← أو Skip           │
+└──────┬──────────────┘
+       ▼
+┌──────────────────────┐
+│  🎉 Dashboard        │
+│  كل شيء جاهز         │
+└──────────────────────┘</code></pre>
+<h3>6.2 تدفق AI Error Recovery</h3>
+<pre class="code"><code>┌──────────────────────────────────────────┐
+│     Health Monitor (Automatic)           │
+│  كل 30 ثانية → Gateawy/Channels check   │
+└────────────┬─────────────────────────────┘
+             │ ❌ مشكلة
+             ▼
+┌──────────────────────────────────────────┐
+│     Detection Triggered                   │
+│  Gateway down / Channel disconnected     │
+│  Resource high / Config error            │
+└────────────┬─────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────┐
+│     Level Selection                       │
+│  ┌── WS متاح؟ → Level 1 (Gateway RPC)   │
+│  └── لا → WSL CLI؟ → Level 2 (WSL CLI) │
+│  └── لا → Level 3 (Reset)               │
+└────────────┬─────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────┐
+│     Diagnosis                             │
+│  - Read logs                              │
+│  - Check known error patterns            │
+│  - Identify root cause                   │
+└────────────┬─────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────┐
+│     Apply Fix                             │
+│  - Execute playbook steps                │
+│  - Wait for each step result             │
+│  - Retry if needed (max 3x)             │
+└────────────┬─────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────┐
+│     Verify &amp; Report                       │
+│  - Re-run health check                   │
+│  - ✅ Success → إشعار المستخدم           │
+│  - ❌ Failed → Escalate                  │
+└──────────────────────────────────────────┘</code></pre>
+<h3>6.3 تدفق SaaS Auth</h3>
+<pre class="code"><code>┌──────────────────────────┐
+│  Tauri App: First Launch │
+└────────┬─────────────────┘
+         ▼
+┌────────────────────────────────────┐
+│  Firebase Auth: Sign Up            │
+│  email + password                  │
+│  Create user in Firestore          │
+│  subscription: trial              │
+│  device_count: 0                  │
+└────────┬─────────────────────────┘
+         ▼
+┌────────────────────────────────────┐
+│  Device Registration               │
+│  device_fingerprint ← HW_ID       │
+│  POST /api/devices/register       │
+│  Check: user.devices &lt; 1          │
+│  Check: device not bound to other │
+│  Save: user.devices[0] = fingerprint│
+└────────┬─────────────────────────┘
+         ▼
+┌────────────────────────────────────┐
+│  Admin API Check (عند كل تشغيل)    │
+│  GET /api/users/{uid}/status       │
+│  ← active → متابعة                 │
+│  ← disabled → إظهار &quot;حسابك موقوف&quot;  │
+└────────────────────────────────────┘</code></pre>
+<h3>6.4 إلغاء ربط الجهاز (Device Transfer)</h3>
+<pre class="code"><code>الجهاز القديم:
+  1. المستخدم يضغط &quot;إلغاء ربط الجهاز&quot;
+  2. التطبيق يمسح device_fingerprint من Firestore
+  3. تبقى بيانات المستخدم محفوظة
+
+الجهاز الجديد:
+  1. تسجيل الدخول بنفس الحساب
+  2. التطبيق يكتشف no device_bound
+  3. يشوف device_count=0
+  4. يربط الجهاز الجديد
+
+ملاحظة: لو المستخدم فقد الجهاز،
+المطور من Admin Panel يقدر يمسح الجهاز
+ويدع المستخدم يربط واحد جديد.</code></pre>
+<p>---</p>
+<h2>7. Firebase — الهيكل والتكامل</h2>
+<h3>7.1 هيكل Firestore</h3>
+<pre class="code"><code>/users/{uid}
+  ├── email: string
+  ├── displayName: string
+  ├── createdAt: timestamp
+  ├── lastActive: timestamp
+  ├── status: &quot;active&quot; | &quot;disabled&quot; | &quot;suspended&quot;
+  ├── subscription:
+  │   ├── plan: &quot;trial&quot; | &quot;basic&quot; | &quot;pro&quot;
+  │   ├── startDate: timestamp
+  │   ├── endDate: timestamp (null = active)
+  │   └── stripeCustomerId: string (للمستقبل)
+  ├── device:
+  │   ├── fingerprint: string
+  │   ├── name: string (optional)
+  │   ├── os: string
+  │   ├── boundAt: timestamp
+  │   └── lastSeen: timestamp
+  ├── settings:
+  │   ├── language: &quot;ar&quot; | &quot;en&quot;
+  │   ├── autoUpdate: boolean
+  │   └── notifications: boolean
+  └── usage:
+      ├── todayTokens: number
+      ├── monthTokens: number
+      ├── todayCost: number
+      ├── monthCost: number
+      └── lastReset: timestamp
+
+/devices/{fingerprint}
+  ├── boundTo: uid (null if unbound)
+  ├── firstSeen: timestamp
+  ├── lastSeen: timestamp
+  └── hwInfo: string (non-identifying)
+
+/admin/users (Admin Panel فقط)
+  ├── list: [uid, email, status, device?]
+  └── stats:
+      ├── totalUsers: number
+      ├── activeUsers: number
+      └── disabledUsers: number</code></pre>
+<h3>7.2 Firebase Functions (Cloud)</h3>
+<p>| Function | Trigger | Description | |----------|---------|-------------| | `onUserCreate` | Auth onCreate | تنشئ وثيقة المستخدم في Firestore | | `onUserDelete` | Auth onDelete | تنظف بيانات المستخدم | | `checkSubscription` | Cron (daily) | تفحص انتهاء الاشتراكات | | `resetUsage` | Cron (daily) | تعيد ضبط counters اليومية | | `adminDisableUser` | Callable | توقف حساب مستخدم | | `adminResetDevice` | Callable | تمسح ربط جهاز المستخدم |</p>
+<h3>7.3 Firebase Security Rules</h3>
+<pre class="code"><code>rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // المستخدم يقرأ فقط بياناته
+    match /users/{userId} {
+      allow read, write: if request.auth.uid == userId
+                        || request.auth.token.admin == true;
+    }
+
+    // الأجهزة — للقراءة فقط للمستخدم
+    match /devices/{fingerprint} {
+      allow read: if resource.data.boundTo == request.auth.uid;
+      allow create: if request.auth.uid != null;
+    }
+
+    // Admin فقط
+    match /admin/{document} {
+      allow read, write: if request.auth.token.admin == true;
+    }
+  }
+}</code></pre>
+<h3>7.4 تدفق التحقق من الجهاز</h3>
+<pre class="code"><code>1. Tauri يرسل:
+   {
+     uid: &quot;abc123&quot;,
+     email: &quot;user@email.com&quot;,
+     deviceFingerprint: &quot;sha256(hw_id+os+disk_id)&quot;
+   }
+
+2. Firebase Function:
+   a. Get user doc → check status
+   b. If disabled → return {error: &quot;disabled&quot;}
+   c. Get device doc by fingerprint
+   d. If device.boundTo == null → bind to this user
+   e. If device.boundTo != uid → return {error: &quot;device_bound&quot;}
+   f. If device.boundTo == uid → allow
+
+3. Tauri:
+   If allowed → continue to dashboard
+   If disabled → show &quot;حسابك موقوف&quot;
+   If device_bound → show &quot;هذا الجهاز مرتبط بحساب آخر&quot;</code></pre>
+<p>---</p>
+<h2>8. نظام الـ AI Error Recovery</h2>
+<h3>8.1 هندسة النظام</h3>
+<pre class="code"><code>┌──────────────────────────────────────────────────┐
+│                Error Recovery System              │
+├──────────────────────────────────────────────────┤
+│                                                   │
+│  ┌──────────────────────────────────────────┐    │
+│  │   Health Monitor (Cron in Tauri)          │    │
+│  │   كل 30 ثانية                             │    │
+│  │   WS health check → WSL fallback         │    │
+│  └──────────────┬───────────────────────────┘    │
+│                 │ error detected                  │
+│                 ▼                                  │
+│  ┌──────────────────────────────────────────┐    │
+│  │   Diagnostic Engine                        │    │
+│  │   Level 1: Gateway RPC (maintenance agent) │    │
+│  │   Level 2: WSL CLI (direct commands)      │    │
+│  │   Level 3: Embedded Rust logic             │    │
+│  └──────────────┬───────────────────────────┘    │
+│                 │ diagnosis result               │
+│                 ▼                                  │
+│  ┌──────────────────────────────────────────┐    │
+│  │   Fix Executor                            │    │
+│  │   Playbook Router                         │    │
+│  │   Step Executor + Retry Logic             │    │
+│  └──────────────┬───────────────────────────┘    │
+│                 │ fix result                      │
+│                 ▼                                  │
+│  ┌──────────────────────────────────────────┐    │
+│  │   Reporter                                │    │
+│  │   ✅ Success: Notification + Log         │    │
+│  │   ❌ Failed: Escalate to Developer        │    │
+│  └──────────────────────────────────────────┘    │
+│                                                   │
+└──────────────────────────────────────────────────┘</code></pre>
+<h3>8.2 Known Error Patterns Playbook</h3>
+<p>| الخطأ | التشخيص | الحل | نسبة النجاح | |-------|---------|------|-------------| | WhatsApp expired | Log: &quot;loggedOut&quot; | Re-run QR login | 100% | | Gateway crash | WS timeout + status check | doctor + restart | 90% | | Config invalid | doctor يبلغ | doctor --fix | 85% | | API key expired | Model calls fail | UI يطلب تحديث الـ key | 100% | | Port conflict | &quot;EADDRINUSE&quot; | Stop other process + restart | 80% | | WSL stopped | wsl --status | wsl restart | 100% | | High memory | memory &gt; 500MB | Restart gateway | 70% | | SSL/Proxy errors | Network errors | Diagnose + report | 60% | | Unknown error | لا يتطابق مع الأنماط | Diagnose + Escalate | — |</p>
+<h3>8.3 التعامل مع Unknown Errors</h3>
+<p>عندما لا يتعرف النظام على الخطأ:</p>
+<pre class="code"><code>1. تشغيل فحص شامل:
+   - openclaw health --verbose --json
+   - openclaw doctor --non-interactive
+   - 100 سطر آخر من logs
+
+2. إرسال البيانات إلى Developer Dashboard:
+   - Diagnostics export
+   - Error context + logs
+
+3. إظهار رسالة للمستخدم:
+   &quot;عذرًا، واجه النظام مشكلة غير معروفة.
+    تم إرسال التقرير للمطور. سنتواصل معك قريبًا.&quot;
+
+4. النظام يستمر في المراقبة:
+   - إذا تحسنت الحالة → إشعار
+   - إذا تفاقمت → إعادة تشغيل تلقائي</code></pre>
+<p>---</p>
+<h2>9. الأمن والخصوصية</h2>
+<h3>9.1 أمن الحسابات</h3>
+<p>| الجانب | الإجراء | |--------|---------| | المصادقة | Firebase Auth (Email + Password) مع rate limiting | | الجهاز | Fingerprint HW-based + ربط واحد لكل حساب | | Admin Access | Firebase Custom Claims + Admin UI | | API Keys | مخزنة في Tauri secure storage (keytar/credential manager) | | Reset Device | فقط Admin يقدر يفك ربط الجهاز | | تعطيل حساب | لحظي عبر Admin Panel |</p>
+<h3>9.2 أمن البيانات</h3>
+<p>| البيانات | مكان التخزين | الحماية | |----------|-------------|---------| | OpenClaw config | داخل WSL (~/.openclaw/) | أذونات الملفات (600) | | WhatsApp creds | داخل WSL (~/.openclaw/credentials/) | مشفرة من OpenClaw | | Firebase token | Tauri secure storage | مشفر OS-level | | User data | Firestore | Security rules | | Logs | /tmp/openclaw/ + Tauri cache | دوران يومي | | Device fingerprint | Firestore + Tauri | SHA-256 hashed |</p>
+<h3>9.3 التواصل بين المكونات</h3>
+<pre class="code"><code>Tauri → Firebase: HTTPS (TLS 1.3)
+Tauri → WSL: Local pipe (wsl.exe)
+Tauri → OpenClaw: ws://127.0.0.1:18789 (Loopback فقط)
+WSL → OpenClaw: Localhost socket
+OpenClaw → Internet: API calls (TLS)</code></pre>
+<p>---</p>
+<h2>10. خريطة الطريق (Roadmap)</h2>
+<h3>Phase 1 — Foundation (الأسبوعان الأولان)</h3>
+<pre class="code"><code>Week 1-2: الأساس
+
+✅ Tauri project scaffold (React + Rust)
+✅ WSL Bridge Module (basic commands)
+✅ Installer script (WSL + OpenClaw auto-install)
+✅ Firebase Auth integration
+✅ Device binding logic
+✅ Dashboard UI prototype
+  - Gateway status
+  - Channels status overview
+  - Basic health checks</code></pre>
+<h3>Phase 2 — Control &amp; Diagnostics (الأسبوعان 3-4)</h3>
+<pre class="code"><code>Week 3-4: التحكم والتشخيص
+
+✅ Channels Manager UI
+  - WhatsApp QR login
+  - Telegram bot config
+✅ Log viewer with filtering
+✅ OpenClaw Maintenance Agent config
+✅ WebSocket integration (Tauri ↔ Gateway)
+✅ Error Recovery Orchestrator (Level 1 &amp; 2)
+  - Auto-detect disconnects
+  - Auto-fix playbooks
+✅ Model Monitor (basic: tokens + cost)</code></pre>
+<h3>Phase 3 — Intelligence &amp; Production (الأسبوع 5-6)</h3>
+<pre class="code"><code>Week 5-6: الذكاء والإنتاج
+
+✅ AI Error Assistant Chat UI
+✅ Level 3 Recovery (WSL reset)
+✅ Developer Admin Panel (React)
+  - User list
+  - Disable/enable accounts
+  - Device unbinding
+  - Usage overview
+✅ Usage reporting to Firestore
+✅ Model switching from UI
+✅ Notification system
+✅ Beta testing &amp; bug fixes</code></pre>
+<h3>Phase 4 — Post-Launch (الأسبوع 7+)</h3>
+<pre class="code"><code>Week 7+: ما بعد الإطلاق
+
+🔲 Auto-update mechanism
+🔲 Subscription/Pricing (Stripe)
+🔲 More error playbooks
+🔲 Performance optimization
+🔲 Multi-language support
+🔲 Public installer signing
+🔲 User documentation</code></pre>
+<p>---</p>
+<h2>11. المخاطر والتخفيف</h2>
+<h3>11.1 المخاطر التقنية</h3>
+<p>| الخطر | الاحتمال | التأثير | التخفيف | |-------|---------|---------|---------| | OpenClaw API يتغير | متوسط | عالي | Abstract layer فوق API calls | | WSL غير مستقر | منخفض | عالي | Fallback to alternative (Docker) | | Firebase pricing | متوسط | متوسط | Cosmos أو Supabase كبديل | | Device fingerprint غير دقيق | منخفض | متوسط | Fingerprint + fallback manual confirm | | Tauri v2 bugs | منخفض | متوسط | Test early; keep fallbacks |</p>
+<h3>11.2 مخاطر الأعمال</h3>
+<p>| الخطر | الاحتمال | التأثير | التخفيف | |-------|---------|---------|---------| | المستخدم يفقد جهازه | متوسط | متوسط | Admin override لربط جهاز جديد | | المستخدم يبطل WSL | منخفض | عالي | Installer يسوي repair | | API key مسربة | منخفض | عالي | Rotation mechanism + alerts | | عدم رضا عن الـ AI agent | متوسط | منخفض | Manual override متاح دائمًا |</p>
+<h3>11.3 استراتيجية الخروج (Fallback Plan)</h3>
+<pre class="code"><code>إذا فشل المشروع لأي سبب:
+
+1. إيقاف Firebase/SaaS layer
+2. يتحول التطبيق إلى Offline-only mode
+3. المستخدم يحتفظ بـ OpenClaw + WSL
+4. التطبيق يصبح مجرد إدارة محلية
+5. توجيه المستخدمين لمجتمع OpenClaw المفتوح</code></pre>
+<p>---</p>
+<h2>الملحق أ: المصطلحات</h2>
+<p>| المصطلح | الشرح | |---------|-------| | **Gateway** | خدمة OpenClaw الرئيسية (WebSocket + HTTP) | | **WSL** | Windows Subsystem for Linux — بيئة Linux داخل Windows | | **Agent** | وكيل ذكي داخل OpenClaw | | **Tool** | دالة يستخدمها الـ agent (مثل run_doctor) | | **Channel** | قناة تواصل (WhatsApp, Telegram, إلخ) | | **Tauri** | إطار تطبيقات سطح المكتب (Rust + Web) | | **Playbook** | سلسلة خطوات لحل مشكلة معينة |</p>
+<p>---</p>
+<h2>الملحق ب: هيكل مجلدات المشروع</h2>
+<pre class="code"><code>openclaw-manager/
+├── src-tauri/                  # Rust backend
+│   ├── src/
+│   │   ├── main.rs             # Entry point
+│   │   ├── wsl_bridge.rs       # WSL command execution
+│   │   ├── oc_ws_client.rs     # OpenClaw WebSocket client
+│   │   ├── firebase.rs         # Firebase Auth + Firestore
+│   │   ├── orchestrator.rs     # Error recovery engine
+│   │   ├── diagnostics.rs      # Diagnostic utilities
+│   │   └── device.rs           # Device fingerprint
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+│
+├── src/                        # Frontend (React/Lit)
+│   ├── App.tsx
+│   ├── pages/
+│   │   ├── Dashboard.tsx
+│   │   ├── Channels.tsx
+│   │   ├── ModelMonitor.tsx
+│   │   ├── AIAssistant.tsx
+│   │   ├── Logs.tsx
+│   │   └── Settings.tsx
+│   ├── components/
+│   │   ├── StatusCard.tsx
+│   │   ├── ChannelRow.tsx
+│   │   └── Navigation.tsx
+│   └── styles/
+│
+├── installer/
+│   ├── setup.iss               # Inno Setup (optional)
+│   ├── wsl_install.ps1         # PowerShell bootstrap
+│   └── openclaw_install.sh     # Bash script for WSL
+│
+├── admin-panel/                 # React Admin Dashboard
+│   ├── src/
+│   │   ├── pages/
+│   │   │   ├── Users.tsx
+│   │   │   └── Analytics.tsx
+│   │   └── firebase-admin.ts
+│   └── ...
+│
+├── oclaw-config/
+│   ├── maintenance-agent.json   # Agent config template
+│   └── openclaw.base.json      # Base config for new users
+│
+├── functions/                   # Firebase Cloud Functions
+│   ├── src/
+│   │   ├── onUserCreate.ts
+│   │   ├── onUserDelete.ts
+│   │   ├── adminDisableUser.ts
+│   │   └── checkSubscription.ts
+│   └── package.json
+│
+└── package.json                 # Tauri frontend deps</code></pre>
+<p>---</p>
+<p>&gt; **Document Version:** 1.0 &gt; **Date:** 2026-05-15 &gt; **Author:** Ahmed (محمد Assistant) &gt; **Status:** Draft for Review</p>
+</section>
+</body></html>

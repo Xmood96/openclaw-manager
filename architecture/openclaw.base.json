@@ -1,0 +1,66 @@
+{
+  // ===================================
+  // OpenClaw Base Config — للمستخدم الجديد
+  // يستخدم كـ template عند أول تنصيب
+  // ===================================
+
+  agents: {
+    defaults: {
+      workspace: "~/.openclaw/workspace",
+      model: {
+        primary: "anthropic/claude-sonnet-4-6",
+        fallbacks: ["openai/gpt-4o"],
+      },
+    },
+    list: [
+      {
+        id: "main",
+        name: "المساعد الشخصي",
+        // المستخدم يختار اسمه
+      },
+      {
+        id: "maintenance",
+        name: "مساعد الصيانة",
+        model: {
+          primary: "anthropic/claude-sonnet-4-6",
+        },
+        prompt: `أنت مساعد صيانة OpenClaw.
+مهمتك تشخيص وحل مشاكل النظام.
+
+لديك الصلاحيات لتشغيل أوامر التشخيص والإصلاح.
+اتبع التسلسل التالي:
+1. افحص health
+2. حلل الأخطاء من logs
+3. طبق doctor --fix
+4. أعد تشغيل gateway
+5. أعد ربط القناة`,
+      },
+    ],
+  },
+
+  skills: {
+    entries: {
+      "maintenance-skills": {
+        commands: [
+          "openclaw health --json",
+          "openclaw doctor --fix --non-interactive",
+          "tail -200 /tmp/openclaw/*.log",
+        ],
+      },
+    },
+  },
+
+  gateway: {
+    port: 18789,
+    channelHealthCheckMinutes: 5,
+    channelStaleEventThresholdMinutes: 30,
+  },
+
+  session: {
+    dmScope: "per-channel-peer",
+    reset: {
+      mode: "daily",
+      idleMinutes: 120,
+    },
+  },
+}

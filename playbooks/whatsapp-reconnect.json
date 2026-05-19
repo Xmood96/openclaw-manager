@@ -1,0 +1,46 @@
+{
+  "id": "playbook-whatsapp-reconnect",
+  "name": "إعادة ربط واتساب",
+  "description": "عند انتهاء جلسة واتساب أو فقدان الاتصال",
+  "trigger": {
+    "patterns": [
+      "loggedOut",
+      "session expired",
+      "status 515",
+      "WhatsApp disconnected"
+    ],
+    "source": ["health_check", "log_analysis"]
+  },
+  "level": 1,
+  "steps": [
+    {
+      "id": "step-1",
+      "action": "run_command",
+      "command": "openclaw channels logout --channel whatsapp",
+      "timeout": 10000,
+      "on_failure": "continue"
+    },
+    {
+      "id": "step-2",
+      "action": "request_qr_from_gateway",
+      "command": "openclaw channels login --channel whatsapp",
+      "timeout": 30000,
+      "requires_qr": true
+    },
+    {
+      "id": "step-3",
+      "action": "display_qr_in_ui",
+      "qr_data": "{{step-2.output.qr}}",
+      "timeout": 120000
+    },
+    {
+      "id": "step-4",
+      "action": "verify",
+      "command": "openclaw health --json",
+      "timeout": 15000
+    }
+  ],
+  "success_condition": "health.channels.whatsapp.status == 'connected'",
+  "max_retries": 2,
+  "report": "تم إعادة ربط واتساب ✅"
+}

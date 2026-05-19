@@ -1,0 +1,9 @@
+node_modules/
+target/
+dist/
+.env
+*.log
+.DS_Store
+Thumbs.db
+src/tauri-backend/src/firebase_config.json
+workspaces/

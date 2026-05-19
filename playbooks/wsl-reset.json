@@ -1,0 +1,56 @@
+{
+  "id": "playbook-wsl-reset",
+  "name": "إعادة تعيين WSL",
+  "description": "كحل أخير — إيقاف وإعادة تشغيل WSL بالكامل",
+  "trigger": {
+    "patterns": [
+      "Gateway unreachable after restart",
+      "WSL stopped",
+      "All recovery failed"
+    ],
+    "source": ["level_2_fallback"]
+  },
+  "level": 3,
+  "steps": [
+    {
+      "id": "step-1",
+      "action": "run_powershell",
+      "command": "wsl.exe --shutdown",
+      "timeout": 30000,
+      "on_failure": "continue"
+    },
+    {
+      "id": "step-2",
+      "action": "wait",
+      "duration": 5000
+    },
+    {
+      "id": "step-3",
+      "action": "run_powershell",
+      "command": "wsl.exe -d Ubuntu",
+      "timeout": 60000,
+      "on_failure": "abort"
+    },
+    {
+      "id": "step-4",
+      "action": "wait",
+      "duration": 10000
+    },
+    {
+      "id": "step-5",
+      "action": "run_command",
+      "command": "openclaw gateway restart",
+      "timeout": 30000,
+      "on_failure": "abort"
+    },
+    {
+      "id": "step-6",
+      "action": "verify",
+      "command": "openclaw health --json",
+      "timeout": 20000
+    }
+  ],
+  "success_condition": "health.ok == true",
+  "max_retries": 1,
+  "report": "تم إعادة تعيين WSL ✅"
+}

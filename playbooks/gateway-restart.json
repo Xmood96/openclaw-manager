@@ -1,0 +1,49 @@
+{
+  "id": "playbook-gateway-restart",
+  "name": "إعادة تشغيل Gateway",
+  "description": "عند توقف Gateway عن الاستجابة أو crash",
+  "trigger": {
+    "patterns": [
+      "WS timeout",
+      "Gateway not running",
+      "exit code",
+      "connect failed"
+    ],
+    "source": ["websocket_check", "wsl_status"]
+  },
+  "level": 2,
+  "steps": [
+    {
+      "id": "step-1",
+      "action": "run_command",
+      "command": "openclaw doctor --fix --non-interactive",
+      "timeout": 30000,
+      "on_failure": "continue"
+    },
+    {
+      "id": "step-2",
+      "action": "run_command",
+      "command": "openclaw gateway restart",
+      "timeout": 30000,
+      "on_failure": "abort"
+    },
+    {
+      "id": "step-3",
+      "action": "wait",
+      "duration": 5000
+    },
+    {
+      "id": "step-4",
+      "action": "verify",
+      "command": "openclaw health --json",
+      "timeout": 15000
+    }
+  ],
+  "success_condition": "health.ok == true",
+  "max_retries": 2,
+  "fallback": {
+    "level": 3,
+    "playbook": "wsl-reset"
+  },
+  "report": "تم إعادة تشغيل Gateway ✅"
+}

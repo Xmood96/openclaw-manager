@@ -1,0 +1,67 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegram/tauri/refs/heads/main/crates/tauri-config-schema/schema.json",
+  "productName": "OpenClaw Manager",
+  "version": "0.1.0",
+  "identifier": "com.openclaw.manager",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev --prefix ../frontend",
+    "beforeBuildCommand": "npm run build --prefix ../frontend"
+  },
+  "app": {
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "title": "مساعد شخصي",
+        "width": 1100,
+        "height": 750,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": null,
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true,
+      "scope": [
+        {
+          "name": "wsl-exec",
+          "cmd": "wsl.exe",
+          "args": [
+            { "validator": ".*" }
+          ]
+        },
+        {
+          "name": "powershell",
+          "cmd": "powershell.exe",
+          "args": [
+            { "validator": ".*" }
+          ]
+        }
+      ]
+    }
+  }
+}
