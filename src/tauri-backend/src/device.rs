@@ -18,19 +18,24 @@ pub struct DeviceRegistration {
     pub error: Option<String>,
 }
 
+/// الحصول على hostname بشكل آمن
+fn get_hostname() -> String {
+    whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string())
+}
+
 /// إنشاء بصمة للجهاز
 fn create_fingerprint() -> String {
     // نأخذ مكونات فريدة نسبيًا من الجهاز
     let components = [
         std::env::consts::ARCH,
         std::env::consts::OS,
-        &whoami::hostname(),
     ];
 
     let mut hasher = Sha256::new();
     for component in &components {
         hasher.update(component.as_bytes());
     }
+    hasher.update(get_hostname().as_bytes());
     // نضيف UUID ثابت للتفرد
     let stored_id = get_or_create_device_id();
     hasher.update(stored_id.as_bytes());
@@ -51,7 +56,7 @@ pub fn get_device_fingerprint() -> DeviceInfo {
     DeviceInfo {
         fingerprint: create_fingerprint(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
-        hostname: whoami::hostname(),
+        hostname: get_hostname(),
     }
 }
 
@@ -70,6 +75,8 @@ pub async fn register_device(uid: String, id_token: String) -> DeviceRegistratio
         };
     }
 
+    let host = get_hostname();
+
     // نكتب fingerprint في Firestore
     let firestore_url = format!(
         "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/users/{}?updateMask.fieldPaths=device",
@@ -82,7 +89,7 @@ pub async fn register_device(uid: String, id_token: String) -> DeviceRegistratio
                 "mapValue": {
                     "fields": {
                         "fingerprint": { "stringValue": fingerprint },
-                        "name": { "stringValue": whoami::hostname() },
+                        "name": { "stringValue": host },
                         "os": { "stringValue": format!("{} {}", std::env::consts::OS, std::env::consts::ARCH) },
                         "boundAt": { "timestampValue": chrono::Utc::now().to_rfc3339() }
                     }

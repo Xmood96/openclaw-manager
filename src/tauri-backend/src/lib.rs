@@ -7,7 +7,6 @@ pub mod orchestrator;
 pub mod diagnostics;
 pub mod setup;
 
-use tauri::Manager;
 
 #[tauri::command]
 fn greet(name: &str) -> String {

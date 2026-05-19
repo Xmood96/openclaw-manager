@@ -5,5 +5,4 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
-src/tauri-backend/src/firebase_config.json
 workspaces/

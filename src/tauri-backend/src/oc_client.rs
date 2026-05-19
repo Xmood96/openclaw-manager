@@ -1,10 +1,7 @@
 // OpenClaw WebSocket Client — يتصل بـ Gateway مباشرة عبر WebSocket RPC
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Mutex;
-use tauri::State;
 use tungstenite::{connect, Message};
-use url::Url;
 
 pub struct GatewayConnection {
     pub connected: bool,
@@ -32,10 +29,10 @@ pub struct GatewayStatus {
 pub fn connect_to_gateway(url: Option<String>) -> GatewayStatus {
     let ws_url = url.unwrap_or_else(|| "ws://127.0.0.1:18789".into());
 
-    match Url::parse(&ws_url) {
+    match url::Url::parse(&ws_url) {
         Ok(parsed) => {
             match connect(parsed) {
-                Ok((mut socket, response)) => {
+                Ok((mut socket, _response)) => {
                     // إرسال connect request
                     let connect_msg = json!({
                         "type": "req",

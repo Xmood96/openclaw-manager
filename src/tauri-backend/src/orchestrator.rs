@@ -62,6 +62,12 @@ pub fn get_health_summary() -> HealthSummary {
         "degraded".into()
     };
 
+    let channels: Vec<ChannelInfo> = gw.channels.into_iter().map(|ch| ChannelInfo {
+        name: ch.name,
+        connected: ch.connected,
+        status: ch.status,
+    }).collect();
+
     HealthSummary {
         overall,
         wsl: WslStatus {
@@ -73,7 +79,7 @@ pub fn get_health_summary() -> HealthSummary {
             version: gw.version,
             uptime: gw.uptime_secs.map(|s| format!("{}m", s / 60)),
         },
-        channels: gw.channels,
+        channels,
         active_sessions: 0,
         diagnosis: None,
         recommended_action: if !wsl_running {
@@ -109,12 +115,15 @@ pub fn run_diagnosis() -> DiagnosisResult {
         }
     }
 
+    let needs_attention = !issues.is_empty();
+    let overall = if issues.is_empty() { "good".to_string() } else { "issues_found".to_string() };
+
     DiagnosisResult {
         issues_found: issues,
         fixes_applied: fixes,
         fixes_failed: Vec::new(),
-        overall_status: if issues.is_empty() { "good".into() } else { "issues_found".into() },
-        needs_attention: !issues.is_empty(),
+        overall_status: overall,
+        needs_attention,
     }
 }
 
