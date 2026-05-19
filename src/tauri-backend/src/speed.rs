@@ -23,11 +23,11 @@ pub struct ChannelSnap {
     pub status: String,
 }
 
-/// أبسط سكربت ممكن — بدون python3, بدون pgrep
 pub fn take_snapshot() -> SystemSnapshot {
-    // سكربت بسيط جدًا يستخدم jq إذا وجد، وإلا awk
+    // المسار الكامل لـ openclaw + node (لأن PATH قد لا يكون متاحًا في bash غير تفاعلي)
     let script = r#"
-GW=$(openclaw health --json 2>/dev/null)
+OC=~/.npm-global/bin/openclaw
+GW=$($OC health --json 2>/dev/null)
 GWOK=false; GWVER=""; P=0; S=0
 if echo "$GW" | grep -q '"ok".*true' 2>/dev/null; then
   GWOK=true
@@ -35,8 +35,8 @@ if echo "$GW" | grep -q '"ok".*true' 2>/dev/null; then
   P=$(pgrep -f 'openclaw gateway' 2>/dev/null | head -1); [ -z "$P" ] && P=0
   S=$(pgrep -c 'openclaw' 2>/dev/null || echo 0)
 fi
-NODEVER=$(node --version 2>/dev/null || echo "")
-OCVER=$(openclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+NODEVER=$(~/.npm-global/bin/node --version 2>/dev/null || /usr/bin/node --version 2>/dev/null || echo "")
+OCVER=$($OC --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
 echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version\":\"$GWVER\",\"gateway_pid\":$P,\"channels\":[],\"active_sessions\":$S,\"node_version\":\"$NODEVER\",\"openclaw_version\":\"$OCVER\"}"
 "#;
 
@@ -49,7 +49,6 @@ echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
             
-            // حاول تجد JSON
             if let Some(start) = stdout.find('{') {
                 if let Some(end) = stdout.rfind('}') {
                     let clean = &stdout[start..=end];
@@ -66,7 +65,6 @@ echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version
                 }
             }
             
-            // فشل — رجع كل التفاصيل للتشخيص
             SystemSnapshot {
                 wsl_ok: out.status.success(),
                 ubuntu_ok: false, gateway_ok: false, gateway_version: None,
@@ -84,27 +82,25 @@ echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version
     }
 }
 
-/// بدء Gateway
 pub fn start_gateway() -> Result<String, String> {
     let output = std::process::Command::new("wsl.exe")
         .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | grep -q '\"ok\".*true' && echo OK || echo FAIL"])
+            "~/.npm-global/bin/openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; ~/.npm-global/bin/openclaw health --json 2>/dev/null | grep -q '\"ok\".*true' && echo OK || echo FAIL"])
         .output();
 
     match output {
         Ok(out) => {
             let s = String::from_utf8_lossy(&out.stdout);
             if s.contains("OK") { Ok("✅ Gateway بدأ بنجاح".into()) }
-            else { Err(format!("stdout={} stderr={}", s, String::from_utf8_lossy(&out.stderr))) }
+            else { Err(format!("{} {}", s, String::from_utf8_lossy(&out.stderr))) }
         }
         Err(e) => Err(format!("{}", e)),
     }
 }
 
-/// إيقاف Gateway
 pub fn stop_gateway() -> Result<String, String> {
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", "openclaw gateway stop 2>&1"])
+        .args(["-d", "Ubuntu", "--", "bash", "-c", "~/.npm-global/bin/openclaw gateway stop 2>&1"])
         .output();
 
     match output {

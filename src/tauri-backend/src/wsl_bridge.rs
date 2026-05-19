@@ -30,8 +30,10 @@ pub struct ChannelStatus {
 
 /// تنفيذ أمر داخل WSL (sync — للاستخدام الداخلي فقط)
 pub(crate) fn exec_wsl(command: &str) -> WslResult {
+    // نضمن PATH بتحميل .bashrc أولاً في بيئة غير تفاعلية
+    let full_cmd = format!("export PATH=\"$HOME/.npm-global/bin:$PATH\"; {}", command);
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", command])
+        .args(["-d", "Ubuntu", "--", "bash", "-c", &full_cmd])
         .output();
 
     match output {
