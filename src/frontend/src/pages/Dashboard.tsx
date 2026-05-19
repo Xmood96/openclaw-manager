@@ -1,49 +1,54 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-interface HealthSummary {
-  overall: string;
-  wsl: { running: boolean; distro: string };
-  gateway: { reachable: boolean; version: string | null; uptime: string | null };
+interface SystemSnapshot {
+  wsl_ok: boolean;
+  ubuntu_ok: boolean;
+  gateway_ok: boolean;
+  gateway_version: string | null;
+  gateway_pid: number | null;
   channels: { name: string; connected: boolean; status: string }[];
   active_sessions: number;
-  diagnosis: string | null;
-  recommended_action: string | null;
+  node_version: string | null;
+  openclaw_version: string | null;
+  error: string | null;
 }
 
 function Dashboard() {
-  const [health, setHealth] = useState<HealthSummary | null>(null);
+  const [snap, setSnap] = useState<SystemSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [actionResult, setActionResult] = useState<string | null>(null);
 
-  const fetchHealth = async () => {
+  const fetchStatus = async () => {
     try {
-      const result = await invoke<HealthSummary>("get_health_summary");
-      setHealth(result);
+      const result = await invoke<SystemSnapshot>("take_snapshot_cmd");
+      setSnap(result);
     } catch (e) {
-      console.error("فشل جلب الحالة:", e);
+      console.error("فشل:", e);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchHealth();
-    const interval = setInterval(fetchHealth, 30000);
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 15000); // كل 15 ثانية
     return () => clearInterval(interval);
   }, []);
 
   const overallColor =
-    health?.overall === "good"
-      ? "green"
-      : health?.overall === "degraded"
-      ? "orange"
-      : "red";
+    snap?.gateway_ok ? "green" :
+    snap?.wsl_ok ? "orange" : "red";
+
+  const overallText =
+    snap?.gateway_ok ? "✅ النظام يعمل بكفاءة" :
+    snap?.wsl_ok ? "⚠️ Gateway غير شغال" : "❌ WSL غير متصل";
 
   if (loading) {
     return (
       <div className="page-loading">
         <div className="spinner" />
-        <p>جاري فحص النظام...</p>
+        <p>⏳ فحص سريع...</p>
       </div>
     );
   }
@@ -52,69 +57,97 @@ function Dashboard() {
     <div className="page">
       <div className="page-header">
         <h2>لوحة التحكم</h2>
-        <button className="btn btn-sm" onClick={fetchHealth}>
-          🔄 تحديث
-        </button>
+        <button className="btn btn-sm" onClick={fetchStatus}>🔄 تحديث</button>
       </div>
 
       <div className="status-bar" style={{ background: overallColor }}>
-        {health?.overall === "good"
-          ? "✅ النظام يعمل بكفاءة"
-          : health?.overall === "degraded"
-          ? "⚠️ النظام يعمل مع بعض المشاكل"
-          : "❌ النظام يحتاج تدخلاً"}
+        {overallText}
       </div>
 
       <div className="cards-grid">
+        {/* WSL */}
         <div className="card">
           <div className="card-header">
-            <span className="card-icon">🐧</span>
-            <h3>WSL</h3>
+            <span className="card-icon">🐧</span><h3>WSL</h3>
           </div>
-          <div className={`card-status ${health?.wsl.running ? "ok" : "error"}`}>
-            {health?.wsl.running ? "🟢 شغال" : "🔴 موقف"}
+          <div className={`card-status ${snap?.wsl_ok ? "ok" : "error"}`}>
+            {snap?.wsl_ok ? "🟢 شغال" : "🔴 موقف"}
           </div>
-          <div className="card-detail">{health?.wsl.distro}</div>
+          {snap?.node_version && <div className="card-detail">Node {snap.node_version}</div>}
         </div>
 
+        {/* Gateway */}
         <div className="card">
           <div className="card-header">
-            <span className="card-icon">🔵</span>
-            <h3>Gateway</h3>
+            <span className="card-icon">🔵</span><h3>Gateway</h3>
           </div>
-          <div
-            className={`card-status ${health?.gateway.reachable ? "ok" : "error"}`}
-          >
-            {health?.gateway.reachable ? "🟢 متصل" : "🔴 غير متصل"}
+          <div className={`card-status ${snap?.gateway_ok ? "ok" : "error"}`}>
+            {snap?.gateway_ok ? "🟢 متصل" : "🔴 غير متصل"}
           </div>
-          {health?.gateway.version && (
-            <div className="card-detail">الإصدار: {health.gateway.version}</div>
-          )}
-          {health?.gateway.uptime && (
-            <div className="card-detail">مدة التشغيل: {health.gateway.uptime}</div>
+          {snap?.gateway_version && <div className="card-detail">v{snap.gateway_version}</div>}
+          {snap?.gateway_pid && snap.gateway_pid > 0 && (
+            <div className="card-detail">PID: {snap.gateway_pid}</div>
           )}
         </div>
 
+        {/* Sessions */}
         <div className="card">
           <div className="card-header">
-            <span className="card-icon">📊</span>
-            <h3>الجلسات</h3>
+            <span className="card-icon">💬</span><h3>الجلسات</h3>
+          </div>
+          <div className="card-status ok">{snap?.active_sessions ?? 0} نشطة</div>
+        </div>
+
+        {/* OpenClaw */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-icon">📦</span><h3>OpenClaw</h3>
           </div>
           <div className="card-status ok">
-            {health?.active_sessions ?? 0} نشطة
+            {snap?.openclaw_version ? `v${snap.openclaw_version}` : "?"}
           </div>
         </div>
       </div>
 
-      {health?.channels && health.channels.length > 0 && (
+      {/* Gateway Controls */}
+      <div className="section">
+        <h3>🎮 التحكم بـ Gateway</h3>
+        <div className="action-buttons">
+          {!snap?.gateway_ok && (
+            <button className="btn btn-primary" onClick={async () => {
+              setActionResult("⏳ جاري تشغيل Gateway...");
+              const r = await invoke<string>("start_gateway_cmd");
+              setActionResult(r);
+              setTimeout(fetchStatus, 3000);
+            }}>▶️ تشغيل Gateway</button>
+          )}
+          {snap?.gateway_ok && (
+            <button className="btn btn-warning" onClick={async () => {
+              setActionResult("⏳ جاري إيقاف Gateway...");
+              const r = await invoke<string>("stop_gateway_cmd");
+              setActionResult(r);
+              setTimeout(fetchStatus, 2000);
+            }}>⏹️ إيقاف Gateway</button>
+          )}
+          <button className="btn" onClick={async () => {
+            setActionResult("⏳ جاري إعادة التشغيل...");
+            await invoke<string>("stop_gateway_cmd");
+            const r = await invoke<string>("start_gateway_cmd");
+            setActionResult(r);
+            setTimeout(fetchStatus, 3000);
+          }}>🔄 إعادة تشغيل</button>
+        </div>
+        {actionResult && <div className="alert alert-info">{actionResult}</div>}
+      </div>
+
+      {/* Channels */}
+      {snap?.channels && snap.channels.length > 0 && (
         <div className="section">
           <h3>📡 القنوات</h3>
           <div className="channel-list">
-            {health.channels.map((ch) => (
+            {snap.channels.map(ch => (
               <div key={ch.name} className="channel-item">
-                <span className={ch.connected ? "status-ok" : "status-err"}>
-                  {ch.connected ? "✅" : "❌"}
-                </span>
+                <span>{ch.connected ? "✅" : "❌"}</span>
                 <span className="channel-name">{ch.name}</span>
                 <span className="channel-status">{ch.status}</span>
               </div>
@@ -123,11 +156,7 @@ function Dashboard() {
         </div>
       )}
 
-      {health?.recommended_action && (
-        <div className="alert alert-warning">
-          💡 {health.recommended_action}
-        </div>
-      )}
+      {snap?.error && <div className="alert alert-warning">⚠️ {snap.error}</div>}
     </div>
   );
 }

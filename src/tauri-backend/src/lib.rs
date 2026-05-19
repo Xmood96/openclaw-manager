@@ -6,6 +6,7 @@ pub mod device;
 pub mod orchestrator;
 pub mod diagnostics;
 pub mod setup;
+pub mod speed;
 
 
 #[tauri::command]
@@ -43,6 +44,9 @@ pub fn run() {
             setup::run_install_command,
             setup::run_windows_command,
             setup::get_model_recommendations,
+            speed::take_snapshot_cmd,
+            speed::start_gateway_cmd,
+            speed::stop_gateway_cmd,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
