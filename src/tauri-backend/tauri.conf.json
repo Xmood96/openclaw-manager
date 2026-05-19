@@ -5,7 +5,7 @@
   "identifier": "com.openclaw.manager",
   "build": {
     "frontendDist": "../frontend/dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev --prefix frontend",
     "beforeBuildCommand": "npm run build --prefix frontend"
   },
