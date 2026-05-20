@@ -1,6 +1,5 @@
 // WSL Bridge Module — يتواصل مع WSL لتنفيذ أوامر OpenClaw
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use tauri;
 
 #[derive(Debug, Serialize, Deserialize)]

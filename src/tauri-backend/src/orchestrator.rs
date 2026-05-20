@@ -247,12 +247,13 @@ pub async fn run_diagnosis() -> DiagnosisResult {
             }
         }
 
+        let has_issues = !issues.is_empty();
         DiagnosisResult {
             issues_found: issues,
             fixes_applied: fixes,
             fixes_failed: failed,
-            overall_status: if issues.is_empty() { "good".to_string() } else { "issues_found".to_string() },
-            needs_attention: !issues.is_empty(),
+            overall_status: if has_issues { "issues_found".to_string() } else { "good".to_string() },
+            needs_attention: has_issues,
         }
     }).await.unwrap_or_else(|e| DiagnosisResult {
         issues_found: vec![format!("خطأ: {}", e)],
