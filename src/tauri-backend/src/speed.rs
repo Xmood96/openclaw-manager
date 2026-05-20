@@ -8,7 +8,6 @@ pub struct ChannelSnap {
     pub connected: bool,
     pub status: String,
     pub health_state: String,
-    pub last_event_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -96,7 +95,6 @@ for name, ch in data.get('channels', {}).items():
         'connected': ch.get('connected', False),
         'status': ch.get('healthState', 'unknown'),
         'health_state': ch.get('healthState', 'unknown'),
-        'last_event_at': ch.get('lastEventAt', None)
     })
 
 # Count sessions from all agents
@@ -239,7 +237,6 @@ for name, ch in data.get('channels', {}).items():
         'connected': ch.get('connected', False),
         'status': ch.get('healthState', 'unknown'),
         'health_state': ch.get('healthState', 'unknown'),
-        'last_event_at': None
     })
 
 agents = []
