@@ -323,6 +323,69 @@ PYEOF
 
 // ============ Gateway Control ============
 
+pub fn stop_gateway() -> Result<String, String> {
+    // Script that verifies the stop actually happened
+    let script = r##"#!/bin/bash
+set -euo pipefail
+export PATH="$HOME/.npm-global/bin:$PATH"
+
+# Try to stop
+if openclaw gateway stop 2>&1; then
+    # Wait and verify it's really stopped
+    sleep 1
+    HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
+    if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+        echo "STILL_RUNNING"
+    else
+        echo "STOPPED"
+    fi
+else
+    # Check if it was already stopped (that's fine)
+    HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
+    if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(1 if d.get('ok') else 0)" 2>/dev/null; then
+        echo "STOPPED"
+    else
+        echo "STOP_FAILED"
+    fi
+fi
+"##;
+
+    // Try temp-file approach first
+    if let Ok(_) = std::fs::write(r"\\wsl$\Ubuntu\tmp\oc_stop.sh", script) {
+        if let Ok(output) = std::process::Command::new("wsl.exe")
+            .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_stop.sh"])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&output.stdout);
+            let e = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{} {}", s.trim(), e.trim());
+            if s.contains("STOPPED") {
+                return Ok("⏹️ Gateway توقف".into());
+            }
+            if s.contains("STILL_RUNNING") {
+                return Err("⚠️ فشل الإيقاف — Gateway لسى شغال بعد الأمر".into());
+            }
+            return Err(format!("⚠️ فشل الإيقاف: {}", combined.trim()));
+        }
+    }
+
+    // Fallback: check via health after stop
+    let output = std::process::Command::new("wsl.exe")
+        .args(["-d", "Ubuntu", "--", "bash", "-c",
+            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway stop 2>&1; sleep 1; openclaw health --json 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)\" && echo STILL_RUNNING || echo STOPPED"])
+        .output()
+        .map_err(|e| format!("wsl.exe: {}", e))?;
+
+    let s = String::from_utf8_lossy(&output.stdout);
+    if s.contains("STOPPED") {
+        Ok("⏹️ Gateway توقف".into())
+    } else if s.contains("STILL_RUNNING") {
+        Err("⚠️ فشل الإيقاف — Gateway لسى شغال".into())
+    } else {
+        Err(format!("⚠️ فشل الإيقاف: {}", s.trim()))
+    }
+}
+
 pub fn start_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
 export PATH="$HOME/.npm-global/bin:$PATH"
@@ -363,52 +426,7 @@ echo "OK"
     }
 }
 
-pub fn stop_gateway() -> Result<String, String> {
-    let script = r##"#!/bin/bash
-export PATH="$HOME/.npm-global/bin:$PATH"
-if openclaw gateway stop 2>&1; then
-    echo "STOPPED"
-fi
-"##;
 
-    // Try temp-file approach first
-    if let Ok(_) = std::fs::write(r"\\wsl$\Ubuntu\tmp\oc_stop.sh", script) {
-        if let Ok(output) = std::process::Command::new("wsl.exe")
-            .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_stop.sh"])
-            .output()
-        {
-            let s = String::from_utf8_lossy(&output.stdout);
-            let e = String::from_utf8_lossy(&output.stderr);
-            if output.status.success() || s.contains("STOPPED") {
-                // Gateway might already be stopped — that's fine
-                return Ok("⏹️ Gateway توقف".into());
-            }
-            // If it failed due to already stopped, that's also fine
-            if e.contains("not running") || s.contains("not running") {
-                return Ok("⏹️ Gateway كان موقف بالفعل".into());
-            }
-            return Err(format!("{} {}", s.trim(), e.trim()).trim().to_string());
-        }
-    }
-
-    // Fallback: inline
-    let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway stop 2>&1"])
-        .output()
-        .map_err(|e| format!("wsl.exe: {}", e))?;
-
-    if output.status.success() {
-        Ok("⏹️ Gateway توقف".into())
-    } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        if err.contains("not running") {
-            Ok("⏹️ Gateway كان موقف بالفعل".into())
-        } else {
-            Err(err.to_string())
-        }
-    }
-}
 
 // ============ Tauri Commands ============
 

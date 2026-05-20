@@ -199,11 +199,25 @@ openclaw gateway restart 2>&1
     })
 }
 
-/// قراءة سجلات Gateway
+/// قراءة سجلات النظام — يقرأ audit logs + وضع Gateway + الذاكرة
 #[tauri::command]
-pub async fn read_gateway_logs() -> String {
-    tokio::task::spawn_blocking(|| {
-        let r = exec_wsl("tail -100 /home/xmood/.openclaw/logs/*.log 2>/dev/null || echo 'لا توجد سجلات'");
-        if r.success { r.stdout } else { r.stderr }
+pub async fn read_gateway_logs(lines: Option<u32>) -> String {
+    let n = lines.unwrap_or(50);
+    tokio::task::spawn_blocking(move || {
+        // جمع معلومات من مصادر متعددة
+        let commands = vec![
+            // 1. Audit log (آخر الأحداث)
+            format!("echo '=== سجل الأحداث (config-audit) ===' && tail -{} /home/xmood/.openclaw/logs/config-audit.jsonl 2>/dev/null", n),
+            // 2. حالة Gateway
+            "echo '' && echo '=== حالة Gateway ===' && openclaw health --json 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); print('ok:', d.get('ok'), '| sessions:', d.get('sessions',{}).get('count',0), '| channels:', list(d.get('channels',{}).keys()), '| agents:', len(d.get('agents',[])))\" || echo 'غير متاح'".into(),
+            // 3. الإصدارات
+            "echo '' && echo '=== إصدارات ===' && node --version 2>/dev/null && openclaw --version 2>/dev/null".into(),
+            // 4. الذاكرة
+            "echo '' && echo '=== الذاكرة ===' && free -h 2>/dev/null | head -3 || echo 'غير متاح'".into(),
+        ];
+
+        let combined = commands.join("\n");
+        let r = exec_wsl(&combined);
+        if r.success { r.stdout } else { format!("خطأ في جلب السجلات: {}", r.stderr) }
     }).await.unwrap_or_else(|e| format!("خطأ: {}", e))
 }

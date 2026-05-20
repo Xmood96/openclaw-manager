@@ -82,12 +82,14 @@ pub async fn send_agent_message(message: String) -> String {
     format!("تم استلام الرسالة: {}", message)
 }
 
-/// الحصول على حالة Gateway
+/// الحصول على حالة Gateway — يتحقق من الصحة عبر WSL
 #[tauri::command]
 pub async fn get_gateway_status() -> GatewayStatus {
+    // Use the snapshot to get real status
+    let snapshot = crate::speed::take_snapshot();
     GatewayStatus {
-        connected: false,
-        version: None,
-        error: Some("لم يتم الاتصال بعد".into()),
+        connected: snapshot.gateway_ok,
+        version: snapshot.gateway_version.or(snapshot.openclaw_version),
+        error: snapshot.error,
     }
 }
