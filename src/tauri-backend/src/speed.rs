@@ -321,111 +321,161 @@ PYEOF
     }
 }
 
-// ============ Gateway Control ============
+// ============ Gateway Control (Direct Process Management) ============
+// WSL لا يدعم systemd — نستخدم pgrep/kill مباشرة
 
+/// كتابة سكربت في WSL عبر 9P وتشغيله
+fn wsl_exec_script(filename: &str, script: &str) -> Result<String, String> {
+    let wsl_path = format!(r"\\wsl$\Ubuntu\tmp\{}", filename);
+    std::fs::write(&wsl_path, script)
+        .map_err(|e| format!("Write to WSL failed: {}", e))?;
+
+    let output = std::process::Command::new("wsl.exe")
+        .args(["-d", "Ubuntu", "--", "bash", &format!("/tmp/{}", filename)])
+        .output()
+        .map_err(|e| format!("wsl.exe: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !stderr.trim().is_empty() {
+        eprintln!("[{}] stderr: {}", filename, stderr.trim());
+    }
+    Ok(format!("{}\n{}", stdout.trim(), stderr.trim()))
+}
+
+/// إيقاف Gateway — يقتل العملية مباشرة ثم يتأكد
 pub fn stop_gateway() -> Result<String, String> {
-    // Script that verifies the stop actually happened
     let script = r##"#!/bin/bash
-set -euo pipefail
+# Source env
+source ~/.profile 2>/dev/null || true
 export PATH="$HOME/.npm-global/bin:$PATH"
 
-# Try to stop
-if openclaw gateway stop 2>&1; then
-    # Wait and verify it's really stopped
-    sleep 1
-    HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
-    if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
-        echo "STILL_RUNNING"
-    else
-        echo "STOPPED"
+# 1. First, try to use official command (disables service)
+openclaw gateway stop 2>/dev/null || true
+
+# 2. Kill gateway process directly (most reliable)
+PIDS=$(pgrep -f '[o]penclaw$' 2>/dev/null || pgrep -f 'openclaw$' 2>/dev/null || echo "")
+if [ -n "$PIDS" ]; then
+    for pid in $PIDS; do
+        kill $pid 2>/dev/null || true
+    done
+    # Wait a bit for graceful shutdown
+    sleep 2
+    
+    # Check if still running, force kill if needed
+    STILL=$(pgrep -f '[o]penclaw$' 2>/dev/null || echo "")
+    if [ -n "$STILL" ]; then
+        for pid in $STILL; do
+            kill -9 $pid 2>/dev/null || true
+        done
     fi
+    
+    # Also kill openclaw-node if it's still around
+    NODE_PIDS=$(pgrep -f 'openclaw-node' 2>/dev/null || echo "")
+    if [ -n "$NODE_PIDS" ]; then
+        for pid in $NODE_PIDS; do
+            kill -9 $pid 2>/dev/null || true
+        done
+    fi
+    
+    echo "KILLED"
 else
-    # Check if it was already stopped (that's fine)
-    HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
-    if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(1 if d.get('ok') else 0)" 2>/dev/null; then
-        echo "STOPPED"
-    else
-        echo "STOP_FAILED"
-    fi
+    echo "NO_PIDS"
+fi
+
+# 3. Verify: check if gateway is really gone
+sleep 1
+HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
+if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+    echo "STILL_RUNNING"
+else
+    echo "VERIFIED_STOPPED"
 fi
 "##;
 
-    // Try temp-file approach first
-    if let Ok(_) = std::fs::write(r"\\wsl$\Ubuntu\tmp\oc_stop.sh", script) {
-        if let Ok(output) = std::process::Command::new("wsl.exe")
-            .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_stop.sh"])
-            .output()
-        {
-            let s = String::from_utf8_lossy(&output.stdout);
-            let e = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("{} {}", s.trim(), e.trim());
-            if s.contains("STOPPED") {
-                return Ok("⏹️ Gateway توقف".into());
-            }
-            if s.contains("STILL_RUNNING") {
-                return Err("⚠️ فشل الإيقاف — Gateway لسى شغال بعد الأمر".into());
-            }
-            return Err(format!("⚠️ فشل الإيقاف: {}", combined.trim()));
-        }
-    }
+    let combined = wsl_exec_script("oc_stop.sh", script)?;
+    let combined_lower = combined.to_lowercase();
 
-    // Fallback: check via health after stop
-    let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway stop 2>&1; sleep 1; openclaw health --json 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)\" && echo STILL_RUNNING || echo STOPPED"])
-        .output()
-        .map_err(|e| format!("wsl.exe: {}", e))?;
-
-    let s = String::from_utf8_lossy(&output.stdout);
-    if s.contains("STOPPED") {
-        Ok("⏹️ Gateway توقف".into())
-    } else if s.contains("STILL_RUNNING") {
-        Err("⚠️ فشل الإيقاف — Gateway لسى شغال".into())
-    } else {
-        Err(format!("⚠️ فشل الإيقاف: {}", s.trim()))
+    if combined_lower.contains("verified_stopped") {
+        return Ok("⏹️ Gateway توقف بنجاح".into());
     }
+    if combined.contains("NO_PIDS") && combined.contains("VERIFIED_STOPPED") {
+        return Ok("⏹️ Gateway كان موقف بالفعل".into());
+    }
+    if combined.contains("STILL_RUNNING") {
+        return Err("⚠️ فشل — Gateway لسى شغال بعد القتل القسري".into());
+    }
+    if combined.contains("KILLED") && !combined.contains("VERIFIED_STOPPED") {
+        // Kill signal sent but verification failed — return tentative success
+        return Ok("⏹️ تم إرسال إشارة الإيقاف — تحقق من الحالة".into());
+    }
+    Err(format!("⚠️ نتيجة غير متوقعة: {:.300}", combined.trim()))
 }
 
+/// تشغيل Gateway — يبدأها ويثبت أنها تشتغل
 pub fn start_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
+source ~/.profile 2>/dev/null || true
 export PATH="$HOME/.npm-global/bin:$PATH"
-openclaw gateway start > /tmp/oc-start.log 2>&1
-sleep 2
-openclaw health --json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)"
-echo "OK"
+
+# Check if already running
+HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
+if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+    echo "ALREADY_RUNNING"
+    exit 0
+fi
+
+# Start gateway in background
+nohup openclaw gateway start > /tmp/oc-start.log 2>&1 &
+
+# Wait up to 15 seconds for it to come up
+for i in $(seq 1 15); do
+    sleep 1
+    GW_HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
+    if echo "$GW_HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+        echo "STARTED"
+        exit 0
+    fi
+done
+
+# If we get here, startup timed out
+echo "TIMEOUT"
+echo "---START LOG---"
+tail -20 /tmp/oc-start.log 2>/dev/null || echo "No log"
+echo "---END LOG---"
 "##;
 
-    // Try temp-file approach first
-    if let Ok(_) = std::fs::write(r"\\wsl$\Ubuntu\tmp\oc_start.sh", script) {
-        if let Ok(output) = std::process::Command::new("wsl.exe")
-            .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_start.sh"])
-            .output()
-        {
-            let s = String::from_utf8_lossy(&output.stdout);
-            let e = String::from_utf8_lossy(&output.stderr);
-            if output.status.success() && s.contains("OK") {
-                return Ok("✅ Gateway بدأ بنجاح".into());
-            }
-            return Err(format!("{} {}", s.trim(), e.trim()).trim().to_string());
-        }
-    }
+    let combined = wsl_exec_script("oc_start.sh", script)?;
 
-    // Fallback: inline
-    let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)\" && echo OK || echo FAIL"])
-        .output()
-        .map_err(|e| format!("wsl.exe: {}", e))?;
-
-    let s = String::from_utf8_lossy(&output.stdout);
-    if s.contains("OK") {
-        Ok("✅ Gateway بدأ بنجاح".into())
-    } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        Err(format!("{} {}", s.trim(), err.trim()).trim().to_string())
+    if combined.contains("ALREADY_RUNNING") {
+        return Ok("✅ Gateway شغال بالفعل".into());
     }
+    if combined.contains("STARTED") {
+        return Ok("✅ Gateway بدأ بنجاح".into());
+    }
+    if combined.contains("TIMEOUT") {
+        return Err(format!("⚠️ فشل التشغيل — انتهت المهلة:\n{:.500}", combined.trim()));
+    }
+    Err(format!("⚠️ فشل التشغيل: {:.500}", combined.trim()))
 }
 
+/// إعادة تشغيل Gateway — إيقاف ثم تشغيل مع تحقق
+pub fn restart_gateway() -> Result<String, String> {
+    // Stop first
+    let stop_result = stop_gateway();
+    // Wait extra for cleanup
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Then start
+    let start_result = start_gateway();
+
+    match (&stop_result, &start_result) {
+        (Ok(_), Ok(start_msg)) => Ok(format!("🔄 تمت إعادة التشغيل بنجاح — {}", start_msg)),
+        (Err(stop_err), Ok(start_msg)) => Ok(format!("🔄 تم التشغيل ({}) — تحذير الإيقاف: {}", start_msg, stop_err)),
+        (Ok(_), Err(start_err)) => Err(format!("⚠️ توقف ولكن فشل التشغيل: {}", start_err)),
+        (Err(stop_err), Err(start_err)) => Err(format!("⚠️ فشل الإيقاف ({}) والتشغيل ({})", stop_err, start_err)),
+    }
+}
 
 
 // ============ Tauri Commands ============
@@ -450,5 +500,11 @@ pub async fn start_gateway_cmd() -> String {
 #[tauri::command]
 pub async fn stop_gateway_cmd() -> String {
     tokio::task::spawn_blocking(|| stop_gateway().unwrap_or_else(|e| e))
+        .await.unwrap_or_else(|e| format!("خطأ: {}", e))
+}
+
+#[tauri::command]
+pub async fn restart_gateway_cmd() -> String {
+    tokio::task::spawn_blocking(|| restart_gateway().unwrap_or_else(|e| e))
         .await.unwrap_or_else(|e| format!("خطأ: {}", e))
 }

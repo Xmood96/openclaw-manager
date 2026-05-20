@@ -47,6 +47,7 @@ pub fn run() {
             speed::take_snapshot_cmd,
             speed::start_gateway_cmd,
             speed::stop_gateway_cmd,
+            speed::restart_gateway_cmd,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

@@ -159,10 +159,7 @@ function Dashboard() {
           )}
           <button className="btn" onClick={async () => {
             setActionResult("⏳ جاري إعادة التشغيل...");
-            try {
-              await invoke<string>("stop_gateway_cmd");
-            } catch (_) { /* may already be stopped */ }
-            const r = await invoke<string>("start_gateway_cmd");
+            const r = await invoke<string>("restart_gateway_cmd");
             setActionResult(r);
             setTimeout(fetchStatus, 3000);
           }}>🔄 إعادة تشغيل</button>
