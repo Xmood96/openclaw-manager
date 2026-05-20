@@ -1,14 +1,30 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+interface ChannelSnap {
+  name: string;
+  connected: boolean;
+  status: string;
+  health_state: string;
+  last_event_at: string | null;
+}
+
+interface AgentSnap {
+  id: string;
+  name: string;
+  is_default: boolean;
+  session_count: number;
+}
+
 interface SystemSnapshot {
   wsl_ok: boolean;
   ubuntu_ok: boolean;
   gateway_ok: boolean;
   gateway_version: string | null;
   gateway_pid: number | null;
-  channels: { name: string; connected: boolean; status: string }[];
+  channels: ChannelSnap[];
   active_sessions: number;
+  agents: AgentSnap[];
   node_version: string | null;
   openclaw_version: string | null;
   error: string | null;
@@ -32,7 +48,7 @@ function Dashboard() {
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 15000); // كل 15 ثانية
+    const interval = setInterval(fetchStatus, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -96,6 +112,15 @@ function Dashboard() {
             <span className="card-icon">💬</span><h3>الجلسات</h3>
           </div>
           <div className="card-status ok">{snap?.active_sessions ?? 0} نشطة</div>
+          {snap?.agents && snap.agents.length > 0 && (
+            <div className="card-detail">
+              {snap.agents.map(a => (
+                <span key={a.id} className="agent-badge">
+                  {a.is_default ? "⭐" : "🤖"} {a.id}: {a.session_count}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* OpenClaw */}
@@ -105,6 +130,9 @@ function Dashboard() {
           </div>
           <div className="card-status ok">
             {snap?.openclaw_version ? `v${snap.openclaw_version}` : "?"}
+          </div>
+          <div className="card-detail">
+            {snap?.agents?.length ?? 0} وكلاء
           </div>
         </div>
       </div>
@@ -131,11 +159,25 @@ function Dashboard() {
           )}
           <button className="btn" onClick={async () => {
             setActionResult("⏳ جاري إعادة التشغيل...");
-            await invoke<string>("stop_gateway_cmd");
+            try {
+              await invoke<string>("stop_gateway_cmd");
+            } catch (_) { /* may already be stopped */ }
             const r = await invoke<string>("start_gateway_cmd");
             setActionResult(r);
             setTimeout(fetchStatus, 3000);
           }}>🔄 إعادة تشغيل</button>
+          <button className="btn btn-sm" onClick={async () => {
+            setActionResult("⏳ تشخيص...");
+            try {
+              const d: any = await invoke("run_diagnosis");
+              const msg = d.issues_found.length === 0
+                ? "✅ لا توجد مشاكل"
+                : `⚠️ مشاكل: ${d.issues_found.join("، ")}${d.fixes_applied.length ? `\n✅ تم إصلاح: ${d.fixes_applied.join("، ")}` : ""}`;
+              setActionResult(msg);
+            } catch (e) {
+              setActionResult(`❌ ${e}`);
+            }
+          }}>🩺 تشخيص</button>
         </div>
         {actionResult && <div className="alert alert-info">{actionResult}</div>}
       </div>
@@ -147,9 +189,14 @@ function Dashboard() {
           <div className="channel-list">
             {snap.channels.map(ch => (
               <div key={ch.name} className="channel-item">
-                <span>{ch.connected ? "✅" : "❌"}</span>
-                <span className="channel-name">{ch.name}</span>
-                <span className="channel-status">{ch.status}</span>
+                <span>{ch.connected ? "🟢" : "🔴"}</span>
+                <span className="channel-name">{ch.name === "whatsapp" ? "WhatsApp" : ch.name}</span>
+                <span className={`channel-status ${ch.connected ? "status-ok" : "status-err"}`}>
+                  {ch.connected ? "متصل" : "غير متصل"}
+                </span>
+                {ch.status && ch.status !== "unknown" && (
+                  <span className="channel-detail">{ch.health_state}</span>
+                )}
               </div>
             ))}
           </div>

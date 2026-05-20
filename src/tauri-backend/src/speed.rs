@@ -3,6 +3,23 @@ use serde::{Deserialize, Serialize};
 use tauri;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChannelSnap {
+    pub name: String,
+    pub connected: bool,
+    pub status: String,
+    pub health_state: String,
+    pub last_event_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentSnap {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+    pub session_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SystemSnapshot {
     pub wsl_ok: bool,
     pub ubuntu_ok: bool,
@@ -11,30 +28,24 @@ pub struct SystemSnapshot {
     pub gateway_pid: Option<u32>,
     pub channels: Vec<ChannelSnap>,
     pub active_sessions: u32,
+    pub agents: Vec<AgentSnap>,
     pub node_version: Option<String>,
     pub openclaw_version: Option<String>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ChannelSnap {
-    pub name: String,
-    pub connected: bool,
-    pub status: String,
-}
-
 /// Write a bash script into WSL via \\wsl$\ and execute it there.
 /// This avoids all quoting issues with multi-line scripts through wsl.exe.
-fn run_wsl_script(script: &str) -> Result<String, String> {
-    let wsl_script_path = r"\\wsl$\Ubuntu\tmp\oc_snapshot.sh";
+fn run_wsl_script(filename: &str, script: &str) -> Result<String, String> {
+    let wsl_script_path = format!(r"\\wsl$\Ubuntu\tmp\{}", filename);
 
     // Write the script to WSL filesystem via the 9P network path
-    std::fs::write(wsl_script_path, script)
+    std::fs::write(&wsl_script_path, script)
         .map_err(|e| format!("Failed to write WSL script: {}", e))?;
 
     // Execute it
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_snapshot.sh"])
+        .args(["-d", "Ubuntu", "--", "bash", &format!("/tmp/{}", filename)])
         .output()
         .map_err(|e| format!("wsl.exe failed: {}", e))?;
 
@@ -48,9 +59,8 @@ fn run_wsl_script(script: &str) -> Result<String, String> {
             stderr.trim()));
     }
 
-    // Return stdout, but also check stderr for warnings
+    // Log stderr as a warning but don't fail — bash may emit harmless warnings
     if !stderr.trim().is_empty() {
-        // Log stderr as a warning but don't fail — bash may emit harmless warnings
         eprintln!("WSL script stderr: {}", stderr.trim());
     }
 
@@ -60,34 +70,112 @@ fn run_wsl_script(script: &str) -> Result<String, String> {
 pub fn take_snapshot() -> SystemSnapshot {
     let script = r##"#!/bin/bash
 export PATH="$HOME/.npm-global/bin:$PATH"
+set -e
 
-# Capture health JSON
-GW=$(openclaw health --json 2>/dev/null)
+# Save health JSON to temp file
+openclaw health --json 2>/dev/null > /tmp/oc_health.json || echo '{}' > /tmp/oc_health.json
 
-GWOK=false
-GWVER=""
-P=0
-S=0
+# Use python3 for reliable JSON parsing (avoids all bash quoting issues)
+python3 << 'PYEOF'
+import json, subprocess, os, sys
 
-if echo "$GW" | grep -q '"ok".*true' 2>/dev/null; then
-  GWOK=true
-  # Extract Gateway version from openclaw --version (more reliable)
-  GWVER=$(openclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
-  P=$(pgrep -f 'openclaw gateway' 2>/dev/null | head -1)
-  [ -z "$P" ] && P=0
-  S=$(pgrep -c 'openclaw' 2>/dev/null || echo 0)
-fi
+# Read health data
+try:
+    with open('/tmp/oc_health.json') as f:
+        data = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    data = {}
 
-NODEVER=$(node --version 2>/dev/null || echo "")
-OCVER=$(openclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+gw_ok = data.get('ok', False)
 
-# Output JSON snapshot
-echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version\":\"$GWVER\",\"gateway_pid\":$P,\"channels\":[],\"active_sessions\":$S,\"node_version\":\"$NODEVER\",\"openclaw_version\":\"$OCVER\"}"
+# Extract channels from the channels object
+channels = []
+for name, ch in data.get('channels', {}).items():
+    channels.append({
+        'name': name,
+        'connected': ch.get('connected', False),
+        'status': ch.get('healthState', 'unknown'),
+        'health_state': ch.get('healthState', 'unknown'),
+        'last_event_at': ch.get('lastEventAt', None)
+    })
+
+# Count sessions from all agents
+try:
+    agents_raw = data.get('agents', [])
+except:
+    agents_raw = []
+
+agents = []
+total_sessions = 0
+for a in agents_raw:
+    sc = 0
+    try:
+        sc = a.get('sessions', {}).get('count', 0)
+    except:
+        sc = 0
+    total_sessions += sc
+    agents.append({
+        'id': a.get('agentId', 'unknown'),
+        'name': a.get('name', ''),
+        'is_default': a.get('isDefault', False),
+        'session_count': sc
+    })
+
+# Also try sessions.count at top level
+try:
+    top_sessions = data.get('sessions', {}).get('count', 0)
+    if top_sessions > total_sessions:
+        total_sessions = top_sessions
+except:
+    pass
+
+# Versions
+node_ver = ""
+oc_ver = ""
+gw_ver = ""
+gw_pid = 0
+
+try:
+    node_ver = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=5).stdout.strip()
+except:
+    node_ver = ""
+
+try:
+    oc_out = subprocess.run(['openclaw', '--version'], capture_output=True, text=True, timeout=5).stdout.strip()
+    import re
+    m = re.search(r'(\d+\.\d+\.\d+)', oc_out)
+    oc_ver = m.group(1) if m else ""
+except:
+    oc_ver = ""
+
+if gw_ok:
+    try:
+        pg = subprocess.run(['pgrep', '-f', 'openclaw gateway'], capture_output=True, text=True, timeout=5)
+        gw_pid = int(pg.stdout.strip().split('\n')[0]) if pg.stdout.strip() else 0
+    except:
+        gw_pid = 0
+    # Use openclaw --version as gateway version too (same binary)
+    gw_ver = oc_ver
+
+output = {
+    'wsl_ok': True,
+    'ubuntu_ok': True,
+    'gateway_ok': gw_ok,
+    'gateway_version': gw_ver if gw_ver else None,
+    'gateway_pid': gw_pid if gw_pid > 0 else None,
+    'channels': channels,
+    'active_sessions': total_sessions,
+    'agents': agents,
+    'node_version': node_ver if node_ver else None,
+    'openclaw_version': oc_ver if oc_ver else None
+}
+
+print(json.dumps(output))
+PYEOF
 "##;
 
-    match run_wsl_script(script) {
+    match run_wsl_script("oc_snapshot.sh", script) {
         Ok(stdout) => {
-            // Extract JSON from output
             if let Some(start) = stdout.find('{') {
                 if let Some(end) = stdout.rfind('}') {
                     let clean = &stdout[start..=end];
@@ -96,7 +184,8 @@ echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version
                         Err(e) => return SystemSnapshot {
                             wsl_ok: true, ubuntu_ok: false, gateway_ok: false,
                             gateway_version: None, gateway_pid: None,
-                            channels: vec![], active_sessions: 0,
+                            channels: vec![], agents: vec![],
+                            active_sessions: 0,
                             node_version: None, openclaw_version: None,
                             error: Some(format!("JSON parse error: {} | raw: {:.200}", e, clean)),
                         },
@@ -106,98 +195,165 @@ echo "{\"wsl_ok\":true,\"ubuntu_ok\":true,\"gateway_ok\":$GWOK,\"gateway_version
             SystemSnapshot {
                 wsl_ok: false, ubuntu_ok: false, gateway_ok: false,
                 gateway_version: None, gateway_pid: None,
-                channels: vec![], active_sessions: 0,
-                node_version: None, openclaw_version: None,
+                channels: vec![], agents: vec![],
+                active_sessions: 0, node_version: None, openclaw_version: None,
                 error: Some(format!("No JSON in output: {:.200}", stdout.trim())),
             }
         }
         Err(e) => {
-            // If the temp-file approach fails, try the fallback single-line command
+            // If the temp-file approach fails, try the fallback
             let fallback = try_fallback_snapshot();
             if fallback.error.is_none() {
                 return fallback;
             }
-            // Both failed — return error
             SystemSnapshot {
                 wsl_ok: false, ubuntu_ok: false, gateway_ok: false,
                 gateway_version: None, gateway_pid: None,
-                channels: vec![], active_sessions: 0,
-                node_version: None, openclaw_version: None,
+                channels: vec![], agents: vec![],
+                active_sessions: 0, node_version: None, openclaw_version: None,
                 error: Some(format!("Snapshot failed: {}. Fallback also failed.", e)),
             }
         }
     }
 }
 
-/// Fallback: single-line inline script (works when WSL 9P path is unavailable)
+/// Fallback: simpler inline script (works when WSL 9P path is unavailable)
 fn try_fallback_snapshot() -> SystemSnapshot {
-    let script = "export PATH=\"$HOME/.npm-global/bin:$PATH\"; GW=$(openclaw health --json 2>/dev/null); GWOK=false; GWVER=\"\"; P=0; S=0; if echo \"$GW\" | grep -q '\"ok\".*true' 2>/dev/null; then GWOK=true; GWVER=$(openclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' || echo \"\"); P=$(pgrep -f 'openclaw gateway' 2>/dev/null | head -1); [ -z \"$P\" ] && P=0; S=$(pgrep -c 'openclaw' 2>/dev/null || echo 0); fi; NODEVER=$(node --version 2>/dev/null || echo \"\"); OCVER=$(openclaw --version 2>/dev/null | head -1 | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' || echo \"\"); echo \"{\\\"wsl_ok\\\":true,\\\"ubuntu_ok\\\":true,\\\"gateway_ok\\\":$GWOK,\\\"gateway_version\\\":\\\"$GWVER\\\",\\\"gateway_pid\\\":$P,\\\"channels\\\":[],\\\"active_sessions\\\":$S,\\\"node_version\\\":\\\"$NODEVER\\\",\\\"openclaw_version\\\":\\\"$OCVER\\\"}\"";
+    let script = r##"#!/bin/bash
+export PATH="$HOME/.npm-global/bin:$PATH"
+openclaw health --json 2>/dev/null > /tmp/oc_health.json || echo '{}' > /tmp/oc_health.json
+python3 << 'PYEOF'
+import json, subprocess, re
 
-    let output = match std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", script])
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => return SystemSnapshot {
-            wsl_ok: false, ubuntu_ok: false, gateway_ok: false,
-            gateway_version: None, gateway_pid: None,
-            channels: vec![], active_sessions: 0,
-            node_version: None, openclaw_version: None,
-            error: Some(format!("wsl.exe: {}", e)),
-        },
-    };
+try:
+    with open('/tmp/oc_health.json') as f:
+        data = json.load(f)
+except:
+    data = {}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+gw_ok = data.get('ok', False)
+channels = []
+for name, ch in data.get('channels', {}).items():
+    channels.append({
+        'name': name,
+        'connected': ch.get('connected', False),
+        'status': ch.get('healthState', 'unknown'),
+        'health_state': ch.get('healthState', 'unknown'),
+        'last_event_at': None
+    })
 
-    if let Some(start) = stdout.find('{') {
-        if let Some(end) = stdout.rfind('}') {
-            let clean = &stdout[start..=end];
-            if let Ok(snap) = serde_json::from_str::<SystemSnapshot>(clean) {
-                return snap;
+agents = []
+ts = 0
+for a in data.get('agents', []):
+    sc = a.get('sessions', {}).get('count', 0)
+    ts += sc
+    agents.append({
+        'id': a.get('agentId', ''),
+        'name': a.get('name', ''),
+        'is_default': a.get('isDefault', False),
+        'session_count': sc
+    })
+
+try:
+    sc = data.get('sessions', {}).get('count', 0)
+    if sc > ts: ts = sc
+except: pass
+
+nv, ov = "", ""
+try:
+    nv = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
+except: pass
+try:
+    oc = subprocess.run(['openclaw', '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
+    m = re.search(r'(\d+\.\d+\.\d+)', oc)
+    ov = m.group(1) if m else ""
+except: pass
+
+gp = 0
+if gw_ok:
+    try:
+        p = subprocess.run(['pgrep', '-f', 'openclaw gateway'], capture_output=True, text=True, timeout=3)
+        gp = int(p.stdout.strip().split('\n')[0]) if p.stdout.strip() else 0
+    except: pass
+
+print(json.dumps({
+    'wsl_ok': True, 'ubuntu_ok': True, 'gateway_ok': gw_ok,
+    'gateway_version': ov or None, 'gateway_pid': gp or None,
+    'channels': channels, 'active_sessions': ts, 'agents': agents,
+    'node_version': nv or None, 'openclaw_version': ov or None
+}))
+PYEOF
+"##;
+
+    let script_inline = script
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let output = std::process::Command::new("wsl.exe")
+        .args(["-d", "Ubuntu", "--", "bash", "-c", &script_inline])
+        .output();
+
+    match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Some(start) = stdout.find('{') {
+                if let Some(end) = stdout.rfind('}') {
+                    let clean = &stdout[start..=end];
+                    if let Ok(snap) = serde_json::from_str::<SystemSnapshot>(clean) {
+                        return snap;
+                    }
+                }
+            }
+            SystemSnapshot {
+                wsl_ok: out.status.success(), ubuntu_ok: false,
+                gateway_ok: false, gateway_version: None, gateway_pid: None,
+                channels: vec![], agents: vec![],
+                active_sessions: 0, node_version: None, openclaw_version: None,
+                error: Some(format!("Fallback parse fail: {:.200}", stdout.trim())),
             }
         }
-    }
-
-    SystemSnapshot {
-        wsl_ok: output.status.success(),
-        ubuntu_ok: false, gateway_ok: false, gateway_version: None,
-        gateway_pid: None, channels: vec![], active_sessions: 0,
-        node_version: None, openclaw_version: None,
-        error: Some(format!("out={} err={}", stdout.trim(), stderr.trim())),
+        Err(e) => SystemSnapshot {
+            wsl_ok: false, ubuntu_ok: false, gateway_ok: false,
+            gateway_version: None, gateway_pid: None,
+            channels: vec![], agents: vec![],
+            active_sessions: 0, node_version: None, openclaw_version: None,
+            error: Some(format!("wsl.exe fallback: {}", e)),
+        },
     }
 }
+
+// ============ Gateway Control ============
 
 pub fn start_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
 export PATH="$HOME/.npm-global/bin:$PATH"
 openclaw gateway start > /tmp/oc-start.log 2>&1
 sleep 2
-openclaw health --json 2>/dev/null | grep -q '"ok".*true' && echo "OK" || echo "FAIL"
+openclaw health --json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)"
+echo "OK"
 "##;
 
-    // Try temp-file approach first (avoids quoting issues)
-    let wsl_script_path = r"\\wsl$\Ubuntu\tmp\oc_start.sh";
-    if std::fs::write(wsl_script_path, script).is_ok() {
+    // Try temp-file approach first
+    if let Ok(_) = std::fs::write(r"\\wsl$\Ubuntu\tmp\oc_start.sh", script) {
         if let Ok(output) = std::process::Command::new("wsl.exe")
             .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_start.sh"])
             .output()
         {
             let s = String::from_utf8_lossy(&output.stdout);
-            if s.contains("OK") {
+            let e = String::from_utf8_lossy(&output.stderr);
+            if output.status.success() && s.contains("OK") {
                 return Ok("✅ Gateway بدأ بنجاح".into());
             }
-            let err = String::from_utf8_lossy(&output.stderr);
-            if !s.trim().is_empty() || !err.trim().is_empty() {
-                return Err(format!("{} {}", s, err));
-            }
+            return Err(format!("{} {}", s.trim(), e.trim()).trim().to_string());
         }
     }
 
-    // Fallback: inline single-line command
+    // Fallback: inline
     let output = std::process::Command::new("wsl.exe")
         .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | grep -q '\"ok\".*true' && echo OK || echo FAIL"])
+            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway start > /tmp/oc-start.log 2>&1; sleep 2; openclaw health --json 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)\" && echo OK || echo FAIL"])
         .output()
         .map_err(|e| format!("wsl.exe: {}", e))?;
 
@@ -206,43 +362,54 @@ openclaw health --json 2>/dev/null | grep -q '"ok".*true' && echo "OK" || echo "
         Ok("✅ Gateway بدأ بنجاح".into())
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
-        Err(format!("{} {}", s, err))
+        Err(format!("{} {}", s.trim(), err.trim()).trim().to_string())
     }
 }
 
 pub fn stop_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
 export PATH="$HOME/.npm-global/bin:$PATH"
-openclaw gateway stop 2>&1
+if openclaw gateway stop 2>&1; then
+    echo "STOPPED"
+fi
 "##;
 
-    // Try temp-file approach first (avoids quoting issues)
-    let wsl_script_path = r"\\wsl$\Ubuntu\tmp\oc_stop.sh";
-    if std::fs::write(wsl_script_path, script).is_ok() {
+    // Try temp-file approach first
+    if let Ok(_) = std::fs::write(r"\\wsl$\Ubuntu\tmp\oc_stop.sh", script) {
         if let Ok(output) = std::process::Command::new("wsl.exe")
             .args(["-d", "Ubuntu", "--", "bash", "/tmp/oc_stop.sh"])
             .output()
         {
-            if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            let e = String::from_utf8_lossy(&output.stderr);
+            if output.status.success() || s.contains("STOPPED") {
+                // Gateway might already be stopped — that's fine
                 return Ok("⏹️ Gateway توقف".into());
             }
-            let err = String::from_utf8_lossy(&output.stderr);
-            if !err.trim().is_empty() {
-                return Err(err.to_string());
+            // If it failed due to already stopped, that's also fine
+            if e.contains("not running") || s.contains("not running") {
+                return Ok("⏹️ Gateway كان موقف بالفعل".into());
             }
+            return Err(format!("{} {}", s.trim(), e.trim()).trim().to_string());
         }
     }
 
-    // Fallback: inline command
+    // Fallback: inline
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway stop 2>&1"])
+        .args(["-d", "Ubuntu", "--", "bash", "-c",
+            "export PATH=\"$HOME/.npm-global/bin:$PATH\"; openclaw gateway stop 2>&1"])
         .output()
         .map_err(|e| format!("wsl.exe: {}", e))?;
 
     if output.status.success() {
         Ok("⏹️ Gateway توقف".into())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        let err = String::from_utf8_lossy(&output.stderr);
+        if err.contains("not running") {
+            Ok("⏹️ Gateway كان موقف بالفعل".into())
+        } else {
+            Err(err.to_string())
+        }
     }
 }
 
@@ -253,8 +420,8 @@ pub async fn take_snapshot_cmd() -> SystemSnapshot {
     tokio::task::spawn_blocking(take_snapshot).await.unwrap_or_else(|e| SystemSnapshot {
         wsl_ok: false, ubuntu_ok: false, gateway_ok: false,
         gateway_version: None, gateway_pid: None,
-        channels: vec![], active_sessions: 0,
-        node_version: None, openclaw_version: None,
+        channels: vec![], agents: vec![],
+        active_sessions: 0, node_version: None, openclaw_version: None,
         error: Some(format!("panic: {}", e)),
     })
 }
