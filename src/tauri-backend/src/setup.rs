@@ -745,11 +745,12 @@ pub fn get_model_recommendations() -> Vec<ModelRecommendation> {
     ]
 }
 
-/// تنفيذ أمر تثبيت في WSL — يستخدم exec_wsl الموثوقة من wsl_bridge
+/// تنفيذ أمر تثبيت في WSL — مع timeout عشان الأوامر الطويلة (مثل onboard)
 #[tauri::command]
 pub async fn run_install_command(command: String) -> String {
     let result = tokio::task::spawn_blocking(move || {
-        let r = crate::wsl_bridge::exec_wsl(&command);
+        // 120 ثانية حد أقصى لأوامر التثبيت والإعداد
+        let r = crate::wsl_bridge::exec_wsl_timeout(&command, 120);
         if r.success {
             let out = r.stdout.trim();
             format!("✅ تم بنجاح\n{}", if out.is_empty() { "اكتمل بدون output".into() } else { out.to_string() })
