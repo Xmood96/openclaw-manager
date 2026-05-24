@@ -36,7 +36,8 @@ pub struct SystemSnapshot {
 /// Write a bash script into WSL via \\wsl$\ and execute it there.
 /// This avoids all quoting issues with multi-line scripts through wsl.exe.
 fn run_wsl_script(filename: &str, script: &str) -> Result<String, String> {
-    let wsl_script_path = format!(r"\\wsl$\Ubuntu\tmp\{}", filename);
+    let distro = crate::wsl_bridge::get_distro_name();
+    let wsl_script_path = format!(r"\\wsl$\{}\tmp\{}", distro, filename);
 
     // Write the script to WSL filesystem via the 9P network path
     std::fs::write(&wsl_script_path, script)
@@ -44,7 +45,7 @@ fn run_wsl_script(filename: &str, script: &str) -> Result<String, String> {
 
     // Execute it
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", &format!("/tmp/{}", filename)])
+        .args(["-d", &distro, "--", "bash", &format!("/tmp/{}", filename)])
         .output()
         .map_err(|e| format!("wsl.exe failed: {}", e))?;
 
@@ -68,7 +69,7 @@ fn run_wsl_script(filename: &str, script: &str) -> Result<String, String> {
 
 pub fn take_snapshot() -> SystemSnapshot {
     let script = r##"#!/bin/bash
-export PATH="$HOME/.npm-global/bin:$PATH"
+# PATH now set by exec_wsl preamble
 set -e
 
 # Save health JSON to temp file
@@ -218,7 +219,7 @@ PYEOF
 /// Fallback: simpler inline script (works when WSL 9P path is unavailable)
 fn try_fallback_snapshot() -> SystemSnapshot {
     let script = r##"#!/bin/bash
-export PATH="$HOME/.npm-global/bin:$PATH"
+# PATH now set by exec_wsl preamble
 openclaw health --json 2>/dev/null > /tmp/oc_health.json || echo '{}' > /tmp/oc_health.json
 python3 << 'PYEOF'
 import json, subprocess, re
@@ -288,8 +289,9 @@ PYEOF
         .collect::<Vec<_>>()
         .join("; ");
 
+    let distro_fb = crate::wsl_bridge::get_distro_name();
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c", &script_inline])
+        .args(["-d", &distro_fb, "--", "bash", "-c", &script_inline])
         .output();
 
     match output {
@@ -326,12 +328,13 @@ PYEOF
 
 /// كتابة سكربت في WSL عبر 9P وتشغيله
 fn wsl_exec_script(filename: &str, script: &str) -> Result<String, String> {
-    let wsl_path = format!(r"\\wsl$\Ubuntu\tmp\{}", filename);
+    let distro = crate::wsl_bridge::get_distro_name();
+    let wsl_path = format!(r"\\wsl$\{}\tmp\{}", distro, filename);
     std::fs::write(&wsl_path, script)
         .map_err(|e| format!("Write to WSL failed: {}", e))?;
 
     let output = std::process::Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", &format!("/tmp/{}", filename)])
+        .args(["-d", &distro, "--", "bash", &format!("/tmp/{}", filename)])
         .output()
         .map_err(|e| format!("wsl.exe: {}", e))?;
 
@@ -349,7 +352,7 @@ pub fn stop_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
 # Source env
 source ~/.profile 2>/dev/null || true
-export PATH="$HOME/.npm-global/bin:$PATH"
+# PATH now set by exec_wsl preamble
 
 # 1. First, try to use official command (disables service)
 openclaw gateway stop 2>/dev/null || true
@@ -417,7 +420,7 @@ fi
 pub fn start_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
 source ~/.profile 2>/dev/null || true
-export PATH="$HOME/.npm-global/bin:$PATH"
+# PATH now set by exec_wsl preamble
 
 # Check if already running
 HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')

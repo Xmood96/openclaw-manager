@@ -96,23 +96,34 @@ pub struct ModelRecommendation {
 // أوامر الفحص
 // ============================================================
 
-/// فحص شامل للنظام — يحدد المرحلة الحالية
+/// فحص شامل للنظام — سكربت واحد يسأل OpenClaw عن كل شيء
 #[tauri::command]
 pub async fn check_full_system() -> SystemStatus {
     tokio::task::spawn_blocking(move || {
+        let distro = crate::wsl_bridge::get_distro_name();
+
+        // — WSL و distro فحص مباشر (لا بديل عنه) —
         let wsl = check_wsl_installed();
-        let ubuntu = if wsl.installed { check_ubuntu_distro() } else { ComponentStatus {
-            installed: false, version: None, details: "WSL غير مثبت".into()
-        }};
-        let nodejs = if ubuntu.installed { check_nodejs_installed() } else { ComponentStatus {
-            installed: false, version: None, details: "Ubuntu غير مثبت".into()
-        }};
-        let openclaw = if ubuntu.installed { check_openclaw_binary() } else { ComponentStatus {
-            installed: false, version: None, details: "Ubuntu غير مثبت".into()
-        }};
-        let config = if openclaw.installed { check_openclaw_config() } else { ComponentStatus {
-            installed: false, version: None, details: "OpenClaw غير مثبت".into()
-        }};
+        let ubuntu = if wsl.installed {
+            check_ubuntu_distro(&distro)
+        } else {
+            ComponentStatus { installed: false, version: None, details: "WSL غير مثبت".into() }
+        };
+
+        // — OpenClaw + config + Gateway: سكربت واحد داخل WSL —
+        let (openclaw, config, gw_running) = if ubuntu.installed {
+            check_openclaw_everything("", "")
+        } else {
+            (
+                ComponentStatus { installed: false, version: None, details: format!("{} غير مثبتة", distro) },
+                ComponentStatus { installed: false, version: None, details: String::new() },
+                false,
+            )
+        };
+
+        let nodejs = if ubuntu.installed { check_nodejs_installed(&distro) } else {
+            ComponentStatus { installed: false, version: None, details: format!("{} غير مثبتة", distro) }
+        };
 
         let phase = if !wsl.installed {
             SetupPhase::NoWSL
@@ -122,10 +133,10 @@ pub async fn check_full_system() -> SystemStatus {
             SetupPhase::DistroNoOpenClaw
         } else if !config.installed {
             SetupPhase::OpenClawNoConfig
+        } else if gw_running {
+            SetupPhase::OpenClawRunning
         } else {
-            // تحقق مما إذا كان Gateway شغال
-            let gw = check_gateway_process();
-            if gw { SetupPhase::OpenClawRunning } else { SetupPhase::OpenClawStopped }
+            SetupPhase::OpenClawStopped
         };
 
         SystemStatus { overall_phase: phase, wsl, ubuntu, nodejs, openclaw, config }
@@ -137,6 +148,45 @@ pub async fn check_full_system() -> SystemStatus {
         openclaw: ComponentStatus { installed: false, version: None, details: String::new() },
         config: ComponentStatus { installed: false, version: None, details: String::new() },
     })
+}
+
+/// فحص OpenClaw كامل — binary + config + Gateway (يستخدم exec_wsl الموثوقة)
+fn check_openclaw_everything(_wsl_exe: &str, _distro: &str) -> (ComponentStatus, ComponentStatus, bool) {
+    // استخدم exec_wsl من wsl_bridge — هو اللي مثبت ويشتغل صح
+    use crate::wsl_bridge::exec_wsl;
+
+    // 1. هل openclaw موجود؟
+    let which = exec_wsl("which openclaw 2>/dev/null || echo NOT_FOUND");
+    let oc_found = which.success && which.stdout.trim() != "NOT_FOUND" && !which.stdout.trim().is_empty();
+
+    if !oc_found {
+        return (
+            ComponentStatus { installed: false, version: None, details: "OpenClaw غير مثبت".into() },
+            ComponentStatus { installed: false, version: None, details: String::new() },
+            false,
+        );
+    }
+
+    // 2. الإصدار
+    let ver = exec_wsl("openclaw --version 2>/dev/null || echo ?");
+    let oc_version = if ver.success {
+        let v = ver.stdout.trim().to_string();
+        if v.is_empty() || v == "?" { None } else { Some(v) }
+    } else { None };
+
+    // 3. الإعدادات — استخدم مسار ثابت (/home/<user>) بدل $HOME
+    let cfg = exec_wsl("ls -la /home/$(whoami)/.openclaw/openclaw.json 2>/dev/null && echo EXISTS || echo NOT_FOUND");
+    let config_exists = cfg.stdout.trim() == "EXISTS";
+
+    // 4. Gateway
+    let health = exec_wsl("openclaw health --json 2>/dev/null || echo '{}'");
+    let gw_running = health.stdout.contains("\"ok\"") && health.stdout.contains("true");
+
+    (
+        ComponentStatus { installed: true, version: oc_version, details: "OpenClaw مثبت ✓".into() },
+        ComponentStatus { installed: config_exists, version: None, details: if config_exists { "الإعدادات موجودة ✓".into() } else { "لا توجد إعدادات".into() } },
+        gw_running,
+    )
 }
 
 /// ابحث عن wsl.exe في المسارات المعروفة
@@ -195,118 +245,132 @@ fn check_wsl_installed() -> ComponentStatus {
     }
 }
 
-/// فحص توزيعة Ubuntu
-fn check_ubuntu_distro() -> ComponentStatus {
-    // الطريقة المباشرة: نجرب نشغّل echo جوة Ubuntu
-    // هذا أضمن من wsl -l -q لأن الأخير ممكن يعلق أو يرجع exit code غلط
-    let output = Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "echo", "OK"])
-        .output();
+/// فحص توزيعة WSL
+fn check_ubuntu_distro(distro: &str) -> ComponentStatus {
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
 
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let installed = out.status.success() && stdout.trim() == "OK";
+    // قائمة توزيعات نجرّبها (أول وحدة تشتغل)
+    let mut candidates: Vec<String> = vec![distro.to_string()];
+    // أضف fallbacks إذا الاسم الأساسي اختلف
+    let trimmed = distro.trim();
+    if trimmed != distro {
+        candidates.push(trimmed.to_string());
+    }
+    for fallback in &["Ubuntu", "Ubuntu-24.04", "Ubuntu-22.04", "Ubuntu-LTS"] {
+        if !candidates.contains(&fallback.to_string()) {
+            candidates.push(fallback.to_string());
+        }
+    }
 
-            if installed {
-                // نجيب الإصدار
-                let ver = Command::new("wsl.exe")
-                    .args(["-d", "Ubuntu", "--", "lsb_release", "-ds"])
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                    .unwrap_or_default();
+    let mut last_error = String::new();
 
-                ComponentStatus {
-                    installed: true,
-                    version: if ver.is_empty() { Some("Ubuntu".into()) } else { Some(ver) },
-                    details: "توزيعة Ubuntu جاهزة ✓".into(),
-                }
-            } else {
-                ComponentStatus {
-                    installed: false,
-                    version: None,
-                    details: format!("Ubuntu غير موجودة (echo test فشل): {}", stdout),
+    for candidate in &candidates {
+        let output = Command::new(&wsl_exe)
+            .args(["-d", candidate, "--", "echo", "OK"])
+            .output();
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let installed = out.status.success() && stdout.trim() == "OK";
+
+                if installed {
+                    // نجيب الإصدار
+                    let ver = Command::new(&wsl_exe)
+                        .args(["-d", candidate, "--", "lsb_release", "-ds"])
+                        .output()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .unwrap_or_default();
+
+                    return ComponentStatus {
+                        installed: true,
+                        version: if ver.is_empty() { Some(candidate.clone()) } else { Some(ver) },
+                        details: format!("{} جاهزة ✓", candidate),
+                    };
+                } else {
+                    last_error = format!("{} (echo test فشل): {}", candidate, stdout.trim());
                 }
             }
+            Err(e) => {
+                last_error = format!("فشل تشغيل wsl.exe بـ {}: {}", candidate, e);
+            }
         }
-        Err(e) => ComponentStatus {
-            installed: false,
-            version: None,
-            details: format!("wsl.exe غير متاح: {}", e),
-        },
+    }
+
+    ComponentStatus {
+        installed: false,
+        version: None,
+        details: last_error,
     }
 }
 
-/// فحص Node.js داخل Ubuntu
-fn check_nodejs_installed() -> ComponentStatus {
-    let output = Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "node", "--version"])
+/// فحص Node.js — يستخدم exec_wsl الموثوقة
+fn check_nodejs_installed(_distro: &str) -> ComponentStatus {
+    let r = crate::wsl_bridge::exec_wsl("node --version 2>/dev/null || echo NOT_FOUND");
+    let stdout = r.stdout.trim().to_string();
+    let installed = r.success && stdout != "NOT_FOUND" && !stdout.is_empty();
+    ComponentStatus {
+        installed,
+        version: if installed { Some(stdout.clone()) } else { None },
+        details: if installed { stdout } else { "Node.js غير مثبت".into() },
+    }
+}
+
+/// فحص وجود OpenClaw
+fn check_openclaw_binary(distro: &str) -> ComponentStatus {
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+
+    // بنفس طريقة exec_wsl — اضبط PATH وخلاص
+    let full_cmd = format!(
+        "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; openclaw --version 2>/dev/null || echo 'NOT_FOUND'"
+    );
+
+    let output = Command::new(&wsl_exe)
+        .args(["-d", distro, "--", "bash", "-c", &full_cmd])
         .output();
 
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            ComponentStatus {
-                installed: out.status.success(),
-                version: if out.status.success() { Some(stdout.clone()) } else { None },
-                details: stdout,
-            }
-        }
-        Err(e) => ComponentStatus {
-            installed: false,
-            version: None,
-            details: format!("{}", e),
-        },
-    }
-}
-
-/// فحص وجود OpenClaw
-fn check_openclaw_binary() -> ComponentStatus {
-    let output = Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "which", "openclaw"])
-        .output();
-
-    match output {
-        Ok(out) => {
-            let installed = out.status.success();
-            let version = if installed {
-                let ver = Command::new("wsl.exe")
-                    .args(["-d", "Ubuntu", "--", "openclaw", "--version"])
-                    .output();
-                match ver {
-                    Ok(v) => Some(String::from_utf8_lossy(&v.stdout).trim().to_string()),
-                    Err(_) => None,
-                }
-            } else { None };
+            let installed = !stdout.is_empty() && !stdout.contains("NOT_FOUND");
 
             ComponentStatus {
                 installed,
-                version,
-                details: if installed { "OpenClaw مثبت ✓".into() } else { "OpenClaw غير مثبت".into() },
+                version: if installed { Some(stdout.clone()) } else { None },
+                details: if installed {
+                    format!("OpenClaw مثبت ✓ — {}", stdout)
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let info = if stderr.is_empty() { stdout.clone() } else { stderr };
+                    format!("OpenClaw غير مثبت: {}", info)
+                },
             }
         }
         Err(e) => ComponentStatus {
             installed: false,
             version: None,
-            details: format!("{}", e),
+            details: format!("فشل فحص OpenClaw: {}", e),
         },
     }
 }
 
 /// فحص وجود ملف الإعدادات
-fn check_openclaw_config() -> ComponentStatus {
-    let output = Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c",
-            "test -f ~/.openclaw/openclaw.json && echo 'EXISTS' || echo 'NOT_FOUND'"])
+fn check_openclaw_config(distro: &str) -> ComponentStatus {
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+    // نجرب عدة مسارات محتملة لملف الإعدادات — getent يقرأ home الحقيقي
+    let check_cmd = "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:/usr/bin:$PATH\"; for f in \"$OC_HOME/.openclaw/openclaw.json\" \"$OC_HOME/.openclaw/config.yml\" \"$OC_HOME/.openclaw/clawd.json\"; do test -f \"$f\" && echo \"EXISTS:$f\" && exit 0; done; echo 'NOT_FOUND'";
+    let output = Command::new(&wsl_exe)
+        .args(["-d", distro, "--", "bash", "-c", check_cmd])
         .output();
 
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
             let exists = stdout.contains("EXISTS");
+            let found_path = stdout.strip_prefix("EXISTS:").map(|s| s.to_string());
             ComponentStatus {
                 installed: exists,
-                version: None,
+                version: found_path,
                 details: if exists { "الإعدادات موجودة ✓".into() } else { "لا توجد إعدادات بعد".into() },
             }
         }
@@ -319,9 +383,10 @@ fn check_openclaw_config() -> ComponentStatus {
 }
 
 /// فحص عملية Gateway
-fn check_gateway_process() -> bool {
-    let output = Command::new("wsl.exe")
-        .args(["-d", "Ubuntu", "--", "bash", "-c",
+fn check_gateway_process(distro: &str) -> bool {
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+    let output = Command::new(&wsl_exe)
+        .args(["-d", distro, "--", "bash", "-c",
             "pgrep -f 'openclaw gateway' > /dev/null && echo 'RUNNING' || echo 'STOPPED'"])
         .output();
 
@@ -503,9 +568,124 @@ pub fn get_setup_guide(phase: String) -> InstallationGuide {
                 },
             ],
         },
+        "OpenClawNoConfig" => InstallationGuide {
+            current_step: 4,
+            total_steps: 5,
+            overall_progress: 0.75,
+            steps: vec![
+                SetupStep {
+                    step_id: 1, title: "تثبيت WSL".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 2, title: "تثبيت Ubuntu".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 3, title: "تثبيت OpenClaw".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 4, title: "إعداد OpenClaw".into(),
+                    description: "OpenClaw مثبّت لكن يحتاج تهيئة — اختر موديلك وقنواتك.".into(),
+                    explanation: "التهيئة تتم عبر أمر openclaw onboard الذي يسألك أسئلة بسيطة عن تفضيلاتك: الموديل المفضل، القنوات (واتساب، تيليجرام)، وغيرها.".into(),
+                    recommendation: "شغّل openclaw onboard في terminal أو اضغط الزر أدناه لبدء المعالج.".into(),
+                    status: StepStatus::Current,
+                    action_label: "تشغيل معالج الإعداد".into(),
+                },
+                SetupStep {
+                    step_id: 5, title: "تشغيل Gateway".into(),
+                    description: "بانتظار اكتمال الإعداد.".into(),
+                    explanation: "".into(), recommendation: "".into(),
+                    status: StepStatus::Pending, action_label: "".into(),
+                },
+            ],
+        },
+        "OpenClawStopped" => InstallationGuide {
+            current_step: 5,
+            total_steps: 5,
+            overall_progress: 0.9,
+            steps: vec![
+                SetupStep {
+                    step_id: 1, title: "تثبيت WSL".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 2, title: "تثبيت Ubuntu".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 3, title: "تثبيت OpenClaw".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 4, title: "إعداد OpenClaw".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 5, title: "تشغيل Gateway".into(),
+                    description: "كل شيء جاهز — Gateway متوقف فقط ويحتاج تشغيل.".into(),
+                    explanation: "OpenClaw مثبت ومهيأ. فقط الخدمة (Gateway) متوقفة. هذا طبيعي إذا أغلقت الخدمة يدويًا أو أعدت تشغيل الجهاز.".into(),
+                    recommendation: "اضغط على زر التشغيل أدناه. سنبدأ Gateway كخدمة خلفية.".into(),
+                    status: StepStatus::Current,
+                    action_label: "تشغيل Gateway 🚀".into(),
+                },
+            ],
+        },
+        "OpenClawRunning" => InstallationGuide {
+            current_step: 5,
+            total_steps: 5,
+            overall_progress: 1.0,
+            steps: vec![
+                SetupStep {
+                    step_id: 1, title: "تثبيت WSL".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 2, title: "تثبيت Ubuntu".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 3, title: "تثبيت OpenClaw".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 4, title: "إعداد OpenClaw".into(),
+                    status: StepStatus::Done, action_label: "".into(),
+                    description: "تم ✓".into(), explanation: "".into(), recommendation: "".into(),
+                },
+                SetupStep {
+                    step_id: 5, title: "تشغيل Gateway".into(),
+                    description: "🎉 كل شيء يعمل! Gateway شغال والنظام جاهز.".into(),
+                    explanation: "المساعد الشخصي جاهز للاستخدام. يمكنك التواصل معه عبر القنوات المربوطة أو من خلال هذه الواجهة.".into(),
+                    recommendation: "انتقل إلى لوحة التحكم لمتابعة حالة النظام وإدارة القنوات.".into(),
+                    status: StepStatus::Done,
+                    action_label: "الانتقال للوحة التحكم".into(),
+                },
+            ],
+        },
         _ => InstallationGuide {
-            current_step: 0, total_steps: 5, overall_progress: 1.0,
-            steps: vec![],
+            current_step: 0, total_steps: 5, overall_progress: 0.0,
+            steps: vec![
+                SetupStep {
+                    step_id: 0, title: "خطأ غير متوقع".into(),
+                    description: format!("حدث خطأ: {}", phase),
+                    explanation: "حالة غير معروفة. جرب إعادة تشغيل التطبيق أو تواصل مع الدعم.".into(),
+                    recommendation: "أعد فحص النظام.".into(),
+                    status: StepStatus::Error("حالة غير معروفة".into()),
+                    action_label: "إعادة الفحص".into(),
+                },
+            ],
         },
     }
 }
@@ -565,25 +745,19 @@ pub fn get_model_recommendations() -> Vec<ModelRecommendation> {
     ]
 }
 
-/// تنفيذ أمر تثبيت في WSL
+/// تنفيذ أمر تثبيت في WSL — يستخدم exec_wsl الموثوقة من wsl_bridge
 #[tauri::command]
 pub async fn run_install_command(command: String) -> String {
     let result = tokio::task::spawn_blocking(move || {
-        let output = Command::new("wsl.exe")
-            .args(["-d", "Ubuntu", "--", "bash", "-c", &command])
-            .output();
-
-        match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                if out.status.success() {
-                    format!("✅ تم بنجاح\n{}", stdout)
-                } else {
-                    format!("❌ فشل:\n{}", stderr)
-                }
-            }
-            Err(e) => format!("❌ خطأ: {}", e),
+        let r = crate::wsl_bridge::exec_wsl(&command);
+        if r.success {
+            let out = r.stdout.trim();
+            format!("✅ تم بنجاح\n{}", if out.is_empty() { "اكتمل بدون output".into() } else { out.to_string() })
+        } else {
+            let mut msg = String::from("❌ فشل\n");
+            if !r.stdout.trim().is_empty() { msg.push_str(r.stdout.trim()); msg.push('\n'); }
+            if !r.stderr.trim().is_empty() { msg.push_str(r.stderr.trim()); }
+            msg
         }
     }).await.unwrap_or_else(|e| format!("❌ خطأ داخلي: {}", e));
     result

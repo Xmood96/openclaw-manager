@@ -261,13 +261,13 @@ function SetupWizard({ onComplete }: { onComplete: () => void }) {
                         cmd = "npm install -g openclaw";
                         break;
                       case "OpenClawNoConfig":
-                        cmd = "openclaw onboard --non-interactive";
+                        cmd = "openclaw onboard --non-interactive --accept-risk --skip-channels --skip-skills --skip-search --skip-ui --auth-choice skip 2>&1";
                         break;
                       case "OpenClawStopped":
-                        cmd = "openclaw gateway start";
+                        cmd = "openclaw gateway start 2>&1";
                         break;
                       default:
-                        cmd = "openclaw doctor --fix --non-interactive";
+                        cmd = "openclaw doctor --fix --non-interactive 2>&1";
                     }
                     await runAction(step.action_label, cmd, useWindows);
                   }}

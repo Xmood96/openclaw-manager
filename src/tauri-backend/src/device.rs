@@ -1,12 +1,15 @@
 // Device Module — بصمة الجهاز وربطه بالحساب
+// v0.2: Persistent device ID stored in app data directory
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri;
 use uuid::Uuid;
+use crate::app_state;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub fingerprint: String,
+    pub device_id: String,
     pub os: String,
     pub hostname: String,
 }
@@ -23,9 +26,33 @@ fn get_hostname() -> String {
     whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string())
 }
 
+/// الحصول على أو إنشاء معرف جهاز ثابت (مخزّن في الملفات)
+fn get_or_create_device_id() -> String {
+    let filename = "device-id";
+
+    // حاول قراءة المعرف المخزّن
+    match app_state::read_from_file(filename) {
+        Ok(id) => {
+            let trimmed = id.trim().to_string();
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
+        }
+        Err(_) => {
+            // لا يوجد ملف، سننشئ واحدًا
+        }
+    }
+
+    // أنشئ UUID جديد وخزّنه
+    let new_id = Uuid::new_v4().to_string();
+    if let Err(e) = app_state::save_to_file(filename, &new_id) {
+        eprintln!("تحذير: فشل حفظ device-id: {}", e);
+    }
+    new_id
+}
+
 /// إنشاء بصمة للجهاز
 fn create_fingerprint() -> String {
-    // نأخذ مكونات فريدة نسبيًا من الجهاز
     let components = [
         std::env::consts::ARCH,
         std::env::consts::OS,
@@ -36,25 +63,20 @@ fn create_fingerprint() -> String {
         hasher.update(component.as_bytes());
     }
     hasher.update(get_hostname().as_bytes());
-    // نضيف UUID ثابت للتفرد
+    // UUID ثابت مخزّن
     let stored_id = get_or_create_device_id();
     hasher.update(stored_id.as_bytes());
 
     hex::encode(hasher.finalize())
 }
 
-/// الحصول على أو إنشاء معرف جهاز ثابت
-fn get_or_create_device_id() -> String {
-    // TODO: تخزين في secure storage (keytar/credential manager)
-    // نستخدم UUID للـ fallback
-    Uuid::new_v4().to_string()
-}
-
 /// الحصول على معلومات الجهاز
 #[tauri::command]
 pub fn get_device_fingerprint() -> DeviceInfo {
+    let device_id = get_or_create_device_id();
     DeviceInfo {
         fingerprint: create_fingerprint(),
+        device_id: device_id.chars().take(8).collect(), // أول 8 أحرف فقط للعرض
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         hostname: get_hostname(),
     }
@@ -77,7 +99,6 @@ pub async fn register_device(uid: String, id_token: String) -> DeviceRegistratio
 
     let host = get_hostname();
 
-    // نكتب fingerprint في Firestore
     let firestore_url = format!(
         "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/users/{}?updateMask.fieldPaths=device",
         project_id, uid
@@ -106,17 +127,19 @@ pub async fn register_device(uid: String, id_token: String) -> DeviceRegistratio
         .await
     {
         Ok(resp) => {
-            if resp.status().is_success() {
+            let status_code = resp.status();
+            if status_code.is_success() {
                 DeviceRegistration {
                     success: true,
                     bound: true,
                     error: None,
                 }
             } else {
+                let body = resp.text().await.unwrap_or_default();
                 DeviceRegistration {
                     success: false,
                     bound: false,
-                    error: Some(format!("فشل التسجيل: {}", resp.status())),
+                    error: Some(format!("فشل التسجيل ({}): {:.200}", status_code, body)),
                 }
             }
         }

@@ -1,7 +1,7 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegram/tauri/refs/heads/main/crates/tauri-config-schema/schema.json",
+  "$schema": "https://raw.githubusercontent.com/nicegram/tauri/refs/heads/dev/crates/tauri-config-schema/schema.json",
   "productName": "OpenClaw Manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.openclaw.manager",
   "build": {
     "frontendDist": "../frontend/dist",

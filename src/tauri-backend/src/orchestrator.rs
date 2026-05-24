@@ -57,7 +57,7 @@ pub struct DiagnosisResult {
 pub async fn get_health_summary() -> HealthSummary {
     tokio::task::spawn_blocking(|| {
         let script = r##"
-export PATH="$HOME/.npm-global/bin:$PATH"
+# PATH now set by exec_wsl preamble
 openclaw health --json 2>/dev/null > /tmp/oc_health_summary.json || echo '{}' > /tmp/oc_health_summary.json
 python3 << 'PYEOF'
 import json, subprocess, re, sys
@@ -291,6 +291,29 @@ pub async fn run_playbook(playbook_id: String) -> String {
                 let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
                 if doctor.success { "✅ تم تشغيل doctor بنجاح".into() }
                 else { format!("❌ فشل doctor: {}", doctor.stderr) }
+            }
+            "whatsapp-reconnect" => {
+                // إعادة ربط WhatsApp: إزالة ثم إضافة
+                let remove = wsl_bridge::exec_wsl("openclaw channels remove whatsapp 2>&1");
+                if !remove.success && !remove.stderr.contains("not found") {
+                    return format!("❌ فشل إزالة واتساب: {}", remove.stderr);
+                }
+                let login = wsl_bridge::exec_wsl("openclaw channels login --whatsapp 2>&1");
+                if login.success { "✅ WhatsApp جاهز لإعادة الربط — امسح QR".into() }
+                else { format!("❌ فشل بدء ربط واتساب: {}", login.stderr) }
+            }
+            "wsl-reset" => {
+                // إعادة تشغيل WSL بالكامل (الحل الأخير)
+                let shutdown = std::process::Command::new("wsl.exe")
+                    .args(["--shutdown"])
+                    .output();
+                match shutdown {
+                    Ok(_) => {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        "✅ تم إعادة تشغيل WSL — أنتظر 10 ثواني ثم أعد فحص النظام".into()
+                    }
+                    Err(e) => format!("❌ فشل إعادة تشغيل WSL: {}", e),
+                }
             }
             _ => format!("❌ playbook غير معروف: {}", playbook_id),
         }

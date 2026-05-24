@@ -28,7 +28,7 @@ const navItems: NavItem[] = [
   { id: "dashboard", label: "الرئيسية", icon: "🏠" },
   { id: "channels", label: "القنوات", icon: "📡" },
   { id: "models", label: "الموديلات", icon: "🧠" },
-  { id: "assistant", label: "مساعد الصيانة", icon: "🤖" },
+  { id: "assistant", label: "المساعد الذكي", icon: "🫀" },
   { id: "logs", label: "السجلات", icon: "📋" },
   { id: "settings", label: "الإعدادات", icon: "⚙️" },
 ];
@@ -132,7 +132,7 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <span className="version">v0.1.0</span>
+          <span className="version">v0.2.0</span>
           {!setupComplete && (
             <div className="setup-indicator">
               <span className="setup-dot" />
