@@ -388,7 +388,7 @@ pub async fn agent_health_check() -> Vec<AgentDiagnosis> {
 
             // 3b. فحص Gateway
             let health = crate::wsl_bridge::exec_wsl(
-                "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; openclaw health --json 2>/dev/null || echo '{}'"
+                "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; timeout 5 openclaw health --json 2>/dev/null || echo '{}'"
             );
 
             if let Ok(h) = serde_json::from_str::<Value>(&health.stdout) {

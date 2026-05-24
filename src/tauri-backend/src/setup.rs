@@ -178,9 +178,9 @@ fn check_openclaw_everything(_wsl_exe: &str, _distro: &str) -> (ComponentStatus,
     let cfg = exec_wsl("ls -la /home/$(whoami)/.openclaw/openclaw.json 2>/dev/null && echo EXISTS || echo NOT_FOUND");
     let config_exists = cfg.stdout.trim() == "EXISTS";
 
-    // 4. Gateway
-    let health = exec_wsl("openclaw health --json 2>/dev/null || echo '{}'");
-    let gw_running = health.stdout.contains("\"ok\"") && health.stdout.contains("true");
+    // 4. Gateway — مع timeout لأن `openclaw health` يعلق أحيانًا من Windows
+    let health = crate::wsl_bridge::exec_wsl_timeout("openclaw health --json 2>/dev/null || echo '{}'", 5);
+    let gw_running = health.success && health.stdout.contains("\"ok\"") && health.stdout.contains("true");
 
     (
         ComponentStatus { installed: true, version: oc_version, details: "OpenClaw مثبت ✓".into() },
