@@ -69,13 +69,28 @@ fn run_wsl_script(filename: &str, script: &str) -> Result<String, String> {
 
 pub fn take_snapshot() -> SystemSnapshot {
     let script = r##"#!/bin/bash
-# PATH now set by exec_wsl preamble
+# Snapshot script — يستخدم env -i لعزل PATH عن Windows
 set -e
 
-# Save health JSON to temp file
-openclaw health --json 2>/dev/null > /tmp/oc_health.json || echo '{}' > /tmp/oc_health.json
+# OC_HOME
+OC_BIN="$HOME/.npm-global/bin/openclaw"
 
-# Use python3 for reliable JSON parsing (avoids all bash quoting issues)
+# Fetch health directly via curl بدل openclaw health (اللي يتعلق)
+GW_HTTP=$(curl -s --max-time 2 http://127.0.0.1:18789/ 2>/dev/null | head -c 100 || echo "")
+if echo "$GW_HTTP" | head -1 | grep -q "<title>OpenClaw"; then
+  GW_OK=true
+else
+  GW_OK=false
+fi
+
+# احاول اجيب health json من gateway (إذا فيه endpoint)
+if [ "$GW_OK" = true ]; then
+  curl -s --max-time 2 http://127.0.0.1:18789/api/health 2>/dev/null > /tmp/oc_health.json 2>/dev/null || echo '{}' > /tmp/oc_health.json
+else
+  echo '{}' > /tmp/oc_health.json
+fi
+
+# Use python3 for reliable JSON parsing
 python3 << 'PYEOF'
 import json, subprocess, os, sys
 
@@ -86,7 +101,11 @@ try:
 except (json.JSONDecodeError, FileNotFoundError):
     data = {}
 
-gw_ok = data.get('ok', False)
+gw_ok = data.get('ok', False) or os.environ.get('GW_OK', 'false') == 'true'
+
+# If we couldn't get health JSON but curl returned OK, set gw_ok
+if not gw_ok:
+    gw_ok = "$GW_OK" == "true"
 
 # Extract channels from the channels object
 channels = []
@@ -120,7 +139,6 @@ for a in agents_raw:
         'session_count': sc
     })
 
-# Also try sessions.count at top level
 try:
     top_sessions = data.get('sessions', {}).get('count', 0)
     if top_sessions > total_sessions:
@@ -128,19 +146,20 @@ try:
 except:
     pass
 
-# Versions
+# Versions — use OC_BIN path directly
+oc_bin = "$HOME/.npm-global/bin/openclaw"
 node_ver = ""
 oc_ver = ""
 gw_ver = ""
 gw_pid = 0
 
 try:
-    node_ver = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=5).stdout.strip()
+    node_ver = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
 except:
     node_ver = ""
 
 try:
-    oc_out = subprocess.run(['openclaw', '--version'], capture_output=True, text=True, timeout=5).stdout.strip()
+    oc_out = subprocess.run([oc_bin, '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
     import re
     m = re.search(r'(\d+\.\d+\.\d+)', oc_out)
     oc_ver = m.group(1) if m else ""
@@ -149,11 +168,10 @@ except:
 
 if gw_ok:
     try:
-        pg = subprocess.run(['pgrep', '-f', 'openclaw gateway'], capture_output=True, text=True, timeout=5)
+        pg = subprocess.run(['pgrep', '-f', 'openclaw gateway'], capture_output=True, text=True, timeout=3)
         gw_pid = int(pg.stdout.strip().split('\n')[0]) if pg.stdout.strip() else 0
     except:
         gw_pid = 0
-    # Use openclaw --version as gateway version too (same binary)
     gw_ver = oc_ver
 
 output = {
@@ -219,8 +237,16 @@ PYEOF
 /// Fallback: simpler inline script (works when WSL 9P path is unavailable)
 fn try_fallback_snapshot() -> SystemSnapshot {
     let script = r##"#!/bin/bash
-# PATH now set by exec_wsl preamble
-openclaw health --json 2>/dev/null > /tmp/oc_health.json || echo '{}' > /tmp/oc_health.json
+# فحص سريع عبر curl بدل openclaw health
+GW_OK=false
+GW_HTTP=$(curl -s --max-time 2 http://127.0.0.1:18789/ 2>/dev/null | head -c 100)
+if echo "$GW_HTTP" | grep -q "<title>OpenClaw"; then
+  GW_OK=true
+  curl -s --max-time 2 http://127.0.0.1:18789/api/health 2>/dev/null > /tmp/oc_health.json 2>/dev/null
+fi
+if [ "$GW_OK" = false ]; then
+  echo '{}' > /tmp/oc_health.json
+fi
 python3 << 'PYEOF'
 import json, subprocess, re
 
@@ -420,23 +446,24 @@ fi
 pub fn start_gateway() -> Result<String, String> {
     let script = r##"#!/bin/bash
 source ~/.profile 2>/dev/null || true
-# PATH now set by exec_wsl preamble
 
-# Check if already running
-HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
-if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+OC_BIN="$HOME/.npm-global/bin/openclaw"
+
+# Check if already running via curl
+GW_HTTP=$(curl -s --max-time 2 http://127.0.0.1:18789/ 2>/dev/null | head -c 100)
+if echo "$GW_HTTP" | grep -q "<title>OpenClaw"; then
     echo "ALREADY_RUNNING"
     exit 0
 fi
 
 # Start gateway in background
-nohup openclaw gateway start > /tmp/oc-start.log 2>&1 &
+nohup "$OC_BIN" gateway start > /tmp/oc-start.log 2>&1 &
 
 # Wait up to 15 seconds for it to come up
 for i in $(seq 1 15); do
     sleep 1
-    GW_HEALTH=$(openclaw health --json 2>/dev/null || echo '{"ok":false}')
-    if echo "$GW_HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+    GW_HTTP=$(curl -s --max-time 2 http://127.0.0.1:18789/ 2>/dev/null | head -c 100)
+    if echo "$GW_HTTP" | grep -q "<title>OpenClaw"; then
         echo "STARTED"
         exit 0
     fi
