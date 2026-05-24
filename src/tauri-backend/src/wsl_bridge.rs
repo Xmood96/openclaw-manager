@@ -102,12 +102,19 @@ pub fn get_distro_name() -> String {
 }
 
 /// تنفيذ أمر داخل WSL باستخدام التوزيعة المكتشفة تلقائيًا
+/// ⚠️ wsl.exe -- bash -c لا يحتفظ بقيم المتغيرات المصرّح بها.
+/// الحل: استخدام `env -i` لتعيين PATH بشكل صريح مع HOME
+/// وتجنب PATH الموروث من Windows الذي يسبّب مشاكل.
 pub(crate) fn exec_wsl(command: &str) -> WslResult {
     let distro = WSL_DISTRO.as_str();
-    let full_cmd = format!("OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; {}", command);
+    // env -i يعزل PATH الموروث من Windows (مثل npm path) ويستخدم PATH نظيف
+    let wrapped = format!(
+        "env -i HOME=$HOME PATH=\"/home/xmood/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\" bash -c '{}'",
+        command.replace('\'', "'\\''")
+    );
 
     let output = Command::new("wsl.exe")
-        .args(["-d", distro, "--", "bash", "-c", &full_cmd])
+        .args(["-d", distro, "--", "bash", "-c", &wrapped])
         .output();
 
     match output {
@@ -130,7 +137,7 @@ pub(crate) fn exec_wsl(command: &str) -> WslResult {
 pub(crate) fn exec_wsl_timeout(command: &str, timeout_secs: u64) -> WslResult {
     let distro = WSL_DISTRO.as_str();
     let full_cmd = format!(
-        "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; timeout {}s bash -c '{}'",
+        "env -i HOME=$HOME PATH=\"/home/xmood/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\" timeout {}s bash -c '{}'",
         timeout_secs, command.replace('\'', "'\\''")
     );
 
@@ -186,93 +193,47 @@ pub async fn run_wsl_command(command: String) -> WslResult {
 }
 
 /// فحص صحة Gateway مع جلب القنوات والمعلومات الكاملة
+/// يستخدم curl مباشرة للـ HTTP endpoint بدل `openclaw health` الذي يتعطل أحيانًا
 #[tauri::command]
 pub async fn check_gateway_health() -> GatewayHealth {
     tokio::task::spawn_blocking(|| {
-        let result = exec_wsl(r##"
-openclaw health --json 2>/dev/null > /tmp/oc_gw_health.json
-python3 << 'PYEOF'
-import json, subprocess, re, sys
+        // فحص سريع للـ HTTP endpoint
+        let probe = exec_wsl(
+            "curl -s --max-time 3 http://127.0.0.1:18789/api/health 2>/dev/null || echo '{\"ok\":false}'",
+        );
 
-try:
-    with open('/tmp/oc_gw_health.json') as f:
-        data = json.load(f)
-except:
-    data = {}
-
-ok = data.get('ok', False)
-
-channels = []
-for name, ch in data.get('channels', {}).items():
-    channels.append({
-        'name': name,
-        'connected': ch.get('connected', False),
-        'status': ch.get('healthState', 'unknown')
-    })
-
-agents_count = 0
-sessions_count = 0
-for a in data.get('agents', []):
-    agents_count += 1
-    sessions_count += a.get('sessions', {}).get('count', 0)
-
-try:
-    sc = data.get('sessions', {}).get('count', 0)
-    if sc > sessions_count: sessions_count = sc
-except: pass
-
-ov = ""
-try:
-    oc = subprocess.run(['openclaw', '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
-    m = re.search(r'(\d+\.\d+\.\d+)', oc)
-    ov = m.group(1) if m else ""
-except: pass
-
-print(json.dumps({
-    'ok': ok,
-    'running': ok,
-    'version': ov or None,
-    'uptime_secs': None,
-    'channels': channels,
-    'agents_count': agents_count,
-    'sessions_count': sessions_count,
-    'error': None if ok else 'Gateway غير مستجيب'
-}))
-PYEOF
-"##);
-
-        match serde_json::from_str::<GatewayHealth>(&result.stdout) {
-            Ok(health) => health,
+        let mut health: GatewayHealth = match serde_json::from_str::<GatewayHealth>(&probe.stdout) {
+            Ok(h) => h,
             Err(_) => {
-                let fallback = exec_wsl("openclaw health --json 2>/dev/null || echo '{}'");
-                let ok = serde_json::from_str::<serde_json::Value>(&fallback.stdout)
-                    .map(|j| j.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
-                    .unwrap_or(false);
-
-                let channels: Vec<ChannelStatus> = serde_json::from_str::<serde_json::Value>(&fallback.stdout)
-                    .ok()
-                    .map(|j| {
-                        j.get("channels")
-                            .and_then(|c| c.as_object())
-                            .map(|obj| {
-                                obj.iter().map(|(name, ch)| ChannelStatus {
-                                    name: name.clone(),
-                                    connected: ch.get("connected").and_then(|v| v.as_bool()).unwrap_or(false),
-                                    status: ch.get("healthState").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                                }).collect()
-                            })
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_default();
-
+                // لو ما في /api/health endpoint، جرب الـ dashboard page
+                let page = exec_wsl(
+                    "curl -s --max-time 3 http://127.0.0.1:18789/ 2>/dev/null | head -c 200 || echo 'UNREACHABLE'",
+                );
+                let ok = page.stdout.contains("<title>OpenClaw");
+                
+                // جلب الإصدار
+                let version = exec_wsl(
+                    "openclaw --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' || echo ''"
+                );
+                
                 GatewayHealth {
-                    ok, running: ok, version: None,
-                    uptime_secs: None, channels,
-                    agents_count: 0, sessions_count: 0,
+                    ok,
+                    running: ok,
+                    version: if version.success && !version.stdout.trim().is_empty() {
+                        Some(version.stdout.trim().to_string())
+                    } else {
+                        None
+                    },
+                    uptime_secs: None,
+                    channels: Vec::new(),
+                    agents_count: if ok { 1 } else { 0 },
+                    sessions_count: 0,
                     error: if ok { None } else { Some("Gateway غير مستجيب".into()) },
                 }
             }
-        }
+        };
+
+        health
     }).await.unwrap_or_else(|e| GatewayHealth {
         ok: false, running: false, version: None,
         uptime_secs: None, channels: Vec::new(),

@@ -152,6 +152,8 @@ function AIAssistant() {
   const [error, setError] = useState<string | null>(null);
   const [gatewayOk, setGatewayOk] = useState(false);
   const [showActions, setShowActions] = useState(true);
+  const [hasAI, setHasAI] = useState(false);
+  const [aiModel, setAiModel] = useState("🧠 محلي");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -179,6 +181,13 @@ function AIAssistant() {
   useEffect(() => {
     const init = async () => {
       try {
+        // تحقق من وجود مفتاح DeepSeek
+        try {
+          const hasKey = await invoke<boolean>("agent_has_deepseek_key");
+          setHasAI(hasKey);
+          setAiModel(hasKey ? "🧠 DeepSeek" : "🧠 محلي");
+        } catch { /* ignore */ }
+
         // حاول تحميل آخر جلسة
         const savedJson = await invoke<string>("agent_load_session");
         const saved: AgentSession = JSON.parse(savedJson);
@@ -313,11 +322,17 @@ function AIAssistant() {
           <div>
             <h2>المساعد الذكي</h2>
             <span className="chat-subtitle">
-              {gatewayOk ? "🟢 متصل" : "🔴 غير متصل"} · 
+              {hasAI ? "🟢" : "🟡"} {aiModel} · 
+              {gatewayOk ? "Gateway متصل" : "Gateway غير متصل"} ·
               {session?.session_id 
                 ? `جلسة ${session.session_id.slice(0, 8)}` 
                 : "غير مهيأ"}
             </span>
+            {!hasAI && (
+              <span className="chat-hint" style={{ display: 'block', fontSize: '0.75rem', color: 'var(--warning)' }}>
+                💡 اذهب إلى الإعدادات وأضف مفتاح DeepSeek API
+              </span>
+            )}
           </div>
         </div>
         <div className="chat-header-actions">

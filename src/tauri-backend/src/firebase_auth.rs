@@ -327,6 +327,89 @@ pub async fn refresh_token() -> AuthResult {
 // Helpers
 // ============================================================
 
+// ============================================================
+// Firestore Integration — حفظ وقراءة الإعدادات
+// ============================================================
+
+/// حفظ قيمة في Firestore (مفاتيح API، إعدادات)
+#[tauri::command]
+pub async fn save_setting(key: String, value: String) -> Result<String, String> {
+    let session = check_session();
+    let token = session.token.ok_or_else(|| "غير مسجل دخول".to_string())?;
+    let uid = session.uid.ok_or_else(|| "UID مفقود".to_string())?;
+    let project_id = get_firebase_project_id();
+
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/settings?documentId={}_{}",
+        project_id, uid, key
+    );
+
+    let body = serde_json::json!({
+        "fields": {
+            "uid": {"stringValue": uid},
+            "key": {"stringValue": key},
+            "value": {"stringValue": value},
+            "updatedAt": {"stringValue": chrono::Utc::now().to_rfc3339()}
+        }
+    });
+
+    let resp = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("فشل الاتصال بـ Firebase: {}", e))?;
+
+    if resp.status().is_success() {
+        Ok("تم الحفظ في Firebase ✅".into())
+    } else {
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("فشل الحفظ: {}", text))
+    }
+}
+
+/// قراءة قيمة من Firestore
+#[tauri::command]
+pub async fn load_setting(key: String) -> Result<String, String> {
+    let session = check_session();
+    let token = session.token.ok_or_else(|| "غير مسجل دخول".to_string())?;
+    let uid = session.uid.ok_or_else(|| "UID مفقود".to_string())?;
+    let project_id = get_firebase_project_id();
+
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://firestore.googleapis.com/v1/projects/{}/databases/(default)/documents/settings/{}_{}",
+        project_id, uid, key
+    );
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("فشل الاتصال بـ Firebase: {}", e))?;
+
+    if resp.status().is_success() {
+        let data: serde_json::Value = resp.json().await.map_err(|e| format!("فشل قراءة الرد: {}", e))?;
+        if let Some(val) = data["fields"]["value"]["stringValue"].as_str() {
+            Ok(val.to_string())
+        } else {
+            Err("القيمة غير موجودة".into())
+        }
+    } else if resp.status().as_u16() == 404 {
+        Err("الإعداد غير موجود".into())
+    } else {
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("فشل القراءة: {}", text))
+    }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
 /// استخراج رسالة خطأ مفهومة من رد Firebase
 fn extract_firebase_error(raw: &str) -> String {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {

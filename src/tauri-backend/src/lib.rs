@@ -9,6 +9,7 @@ pub mod setup;
 pub mod speed;
 pub mod app_state;
 pub mod maintenance_agent;
+pub mod ai_client;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -75,6 +76,11 @@ pub fn run() {
             maintenance_agent::agent_load_session,
             maintenance_agent::agent_read_file,
             maintenance_agent::agent_run_command,
+            maintenance_agent::agent_set_deepseek_key,
+            maintenance_agent::agent_has_deepseek_key,
+            // Firebase Firestore
+            firebase_auth::save_setting,
+            firebase_auth::load_setting,
         ])
         .setup(|app| {
             // بدء سجلات التطبيق

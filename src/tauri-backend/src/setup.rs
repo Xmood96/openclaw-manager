@@ -155,7 +155,7 @@ fn check_openclaw_everything(_wsl_exe: &str, _distro: &str) -> (ComponentStatus,
     // استخدم exec_wsl من wsl_bridge — هو اللي مثبت ويشتغل صح
     use crate::wsl_bridge::exec_wsl;
 
-    // 1. هل openclaw موجود؟
+    // 1. هل openclaw موجود؟ (exec_wsl يستخدم env -i مع PATH نظيف الآن)
     let which = exec_wsl("which openclaw 2>/dev/null || echo NOT_FOUND");
     let oc_found = which.success && which.stdout.trim() != "NOT_FOUND" && !which.stdout.trim().is_empty();
 
@@ -174,13 +174,16 @@ fn check_openclaw_everything(_wsl_exe: &str, _distro: &str) -> (ComponentStatus,
         if v.is_empty() || v == "?" { None } else { Some(v) }
     } else { None };
 
-    // 3. الإعدادات — استخدم مسار ثابت (/home/<user>) بدل $HOME
-    let cfg = exec_wsl("ls -la /home/$(whoami)/.openclaw/openclaw.json 2>/dev/null && echo EXISTS || echo NOT_FOUND");
+    // 3. الإعدادات — نستخدم المسار المباشر
+    let cfg = exec_wsl("test -f /home/$(whoami)/.openclaw/openclaw.json && echo EXISTS || echo NOT_FOUND");
     let config_exists = cfg.stdout.trim() == "EXISTS";
 
-    // 4. Gateway — مع timeout لأن `openclaw health` يعلق أحيانًا من Windows
-    let health = crate::wsl_bridge::exec_wsl_timeout("openclaw health --json 2>/dev/null || echo '{}'", 5);
-    let gw_running = health.success && health.stdout.contains("\"ok\"") && health.stdout.contains("true");
+    // 4. Gateway — فحص مباشر عبر HTTP
+    let health = crate::wsl_bridge::exec_wsl_timeout(
+        "curl -s --max-time 3 http://127.0.0.1:18789/ 2>/dev/null | head -c 100 || echo 'UNREACHABLE'",
+        5
+    );
+    let gw_running = health.success && health.stdout.contains("<title>OpenClaw");
 
     (
         ComponentStatus { installed: true, version: oc_version, details: "OpenClaw مثبت ✓".into() },

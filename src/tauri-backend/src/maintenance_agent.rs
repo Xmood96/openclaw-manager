@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri;
+use crate::ai_client::{self, ChatMessage, AIResponse};
 // ============================================================
 // هياكل البيانات
 // ============================================================
@@ -240,7 +241,7 @@ pub fn agent_new_chat() -> AgentSession {
     }
 }
 
-/// إرسال رسالة للمساعد — يشغّل التشخيص ويرد
+/// إرسال رسالة للمساعد — يحاول DeepSeek أولاً، وإلا القواعد المحلية
 #[tauri::command]
 pub async fn agent_send_message(session_json: String, message: String) -> Result<String, String> {
     let mut session: AgentSession = serde_json::from_str(&session_json)
@@ -256,8 +257,14 @@ pub async fn agent_send_message(session_json: String, message: String) -> Result
         tool_calls: None,
     });
 
-    // حلل الرسالة وشوف إذا فيها طلب tool
-    let response = process_agent_turn(&message, &mut session).await;
+    // حاول استخدام DeepSeek أولاً
+    let response = match try_deepseek_chat(&session).await {
+        Ok(reply) => reply,
+        Err(_) => {
+            // DeepSeek مش متاح — استخدم القواعد المحلية
+            process_agent_turn(&message, &mut session).await
+        }
+    };
 
     session.messages.push(AgentMessage {
         role: "agent".into(),
@@ -273,6 +280,82 @@ pub async fn agent_send_message(session_json: String, message: String) -> Result
     crate::app_state::save_to_file("agent-session.json", &session_data);
 
     Ok(response)
+}
+
+/// محاولة الرد عبر DeepSeek API
+async fn try_deepseek_chat(session: &AgentSession) -> Result<String, String> {
+    // 1. جرب المفتاح من Firebase (مخزن محليًا)
+    let api_key = match get_stored_deepseek_key() {
+        Some(key) => key,
+        None => {
+            // 2. جرب من متغير البيئة
+            match ai_client::get_deepseek_key_from_env() {
+                Some(key) => key,
+                None => return Err("ما في مفتاح DeepSeek".into()),
+            }
+        }
+    };
+
+    // 3. جهّز الرسائل لـ DeepSeek (آخر 20 رسالة عشان ما نحرق التوكنز)
+    let system_prompt = session.messages.first()
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    let recent_messages: Vec<ChatMessage> = session.messages
+        .iter()
+        .rev()
+        .take(20)
+        .filter(|m| m.role != "system")
+        .map(|m| ChatMessage {
+            role: match m.role.as_str() {
+                "user" => "user".to_string(),
+                "agent" => "assistant".to_string(),
+                _ => "user".to_string(),
+            },
+            content: m.content.clone(),
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    let mut all_messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        }
+    ];
+    all_messages.extend(recent_messages);
+
+    // 4. استدعِ DeepSeek API
+    let response = ai_client::call_deepseek(all_messages, &api_key).await?;
+
+    Ok(response.content)
+}
+
+/// تخزين مفتاح DeepSeek محليًا
+fn save_deepseek_key_locally(key: &str) {
+    crate::app_state::save_to_file("deepseek_key.txt", key).ok();
+}
+
+/// قراءة مفتاح DeepSeek من التخزين المحلي
+fn get_stored_deepseek_key() -> Option<String> {
+    crate::app_state::read_from_file("deepseek_key.txt").ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// حفظ مفتاح DeepSeek محليًا
+#[tauri::command]
+pub fn agent_set_deepseek_key(key: String) -> String {
+    save_deepseek_key_locally(&key);
+    "✅ تم حفظ مفتاح DeepSeek".into()
+}
+
+/// التحقق من وجود مفتاح DeepSeek
+#[tauri::command]
+pub fn agent_has_deepseek_key() -> bool {
+    get_stored_deepseek_key().is_some() || ai_client::get_deepseek_key_from_env().is_some()
 }
 
 /// فحص صحة النظام — agent يشخّص تلقائيًا
