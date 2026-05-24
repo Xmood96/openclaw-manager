@@ -68,128 +68,87 @@ fn run_wsl_script(filename: &str, script: &str) -> Result<String, String> {
 }
 
 pub fn take_snapshot() -> SystemSnapshot {
-    let script = r##"#!/bin/bash
-# Snapshot script — يستخدم env -i لعزل PATH عن Windows
+    let script = format!(
+        r##"#!/bin/bash
+# Snapshot script — bash يحضر المتغيرات و Python يطبع JSON
 set -e
 
-# OC_HOME
 OC_BIN="$HOME/.npm-global/bin/openclaw"
+NODE_VER=$(node --version 2>/dev/null || echo '')
+OC_VER=$("$OC_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo '')
 
-# Fetch health directly via curl بدل openclaw health (اللي يتعلق)
-GW_HTTP=$(curl -s --max-time 2 http://127.0.0.1:18789/ 2>/dev/null | head -c 100 || echo "")
-if echo "$GW_HTTP" | head -1 | grep -q "<title>OpenClaw"; then
-  GW_OK=true
-else
-  GW_OK=false
+# فحص Gateway
+GW_UP=false
+if curl -s --max-time 2 http://127.0.0.1:18789/ 2>/dev/null | head -c 100 | grep -q '<title>OpenClaw'; then
+  GW_UP=true
 fi
 
-# احاول اجيب health json من gateway (إذا فيه endpoint)
-if [ "$GW_OK" = true ]; then
-  curl -s --max-time 2 http://127.0.0.1:18789/api/health 2>/dev/null > /tmp/oc_health.json 2>/dev/null || echo '{}' > /tmp/oc_health.json
-else
-  echo '{}' > /tmp/oc_health.json
+GW_PID=0
+if [ "$GW_UP" = "true" ]; then
+  GW_PID=$(pgrep -f 'openclaw gateway' 2>/dev/null | head -1 || echo 0)
 fi
 
-# Use python3 for reliable JSON parsing
+# اطبع كلشي يحتاجه Python (متغيرات بيئة مؤقتة)
+export SNAP_NODE="$NODE_VER"
+export SNAP_OC="$OC_VER"
+export SNAP_GW="$GW_UP"
+export SNAP_PID="$GW_PID"
+export SNAP_BIN="$OC_BIN"
+
 python3 << 'PYEOF'
-import json, subprocess, os, sys
+import json, subprocess, os, re
 
-# Read health data
-try:
-    with open('/tmp/oc_health.json') as f:
-        data = json.load(f)
-except (json.JSONDecodeError, FileNotFoundError):
-    data = {}
+node_ver = os.environ.get('SNAP_NODE', '')
+oc_ver = os.environ.get('SNAP_OC', '')
+gw_up = os.environ.get('SNAP_GW', 'false') == 'true'
+gw_pid = int(os.environ.get('SNAP_PID', '0') or '0')
+oc_bin = os.environ.get('SNAP_BIN', '$HOME/.npm-global/bin/openclaw')
 
-gw_ok = data.get('ok', False) or os.environ.get('GW_OK', 'false') == 'true'
-
-# If we couldn't get health JSON but curl returned OK, set gw_ok
-if not gw_ok:
-    gw_ok = "$GW_OK" == "true"
-
-# Extract channels from the channels object
 channels = []
-for name, ch in data.get('channels', {}).items():
-    channels.append({
-        'name': name,
-        'connected': ch.get('connected', False),
-        'status': ch.get('healthState', 'unknown'),
-        'health_state': ch.get('healthState', 'unknown'),
-    })
-
-# Count sessions from all agents
-try:
-    agents_raw = data.get('agents', [])
-except:
-    agents_raw = []
-
 agents = []
 total_sessions = 0
-for a in agents_raw:
-    sc = 0
+
+if gw_up:
     try:
-        sc = a.get('sessions', {}).get('count', 0)
+        health_out = subprocess.run([oc_bin, 'health', '--json'], capture_output=True, text=True, timeout=5).stdout
+        d = json.loads(health_out) if health_out else {}
+        for name, ch in d.get('channels', {}).items():
+            channels.append({
+                'name': name,
+                'connected': ch.get('connected', False),
+                'status': ch.get('healthState', 'unknown'),
+                'health_state': ch.get('healthState', 'unknown'),
+            })
+        for a in d.get('agents', []):
+            sc = a.get('sessions', {}).get('count', 0)
+            total_sessions += sc
+            agents.append({
+                'id': a.get('agentId', ''),
+                'name': a.get('name', ''),
+                'is_default': a.get('isDefault', False),
+                'session_count': sc
+            })
+        sc = d.get('sessions', {}).get('count', 0)
+        if sc > total_sessions:
+            total_sessions = sc
     except:
-        sc = 0
-    total_sessions += sc
-    agents.append({
-        'id': a.get('agentId', 'unknown'),
-        'name': a.get('name', ''),
-        'is_default': a.get('isDefault', False),
-        'session_count': sc
-    })
+        pass
 
-try:
-    top_sessions = data.get('sessions', {}).get('count', 0)
-    if top_sessions > total_sessions:
-        total_sessions = top_sessions
-except:
-    pass
-
-# Versions — use OC_BIN path directly
-oc_bin = "$HOME/.npm-global/bin/openclaw"
-node_ver = ""
-oc_ver = ""
-gw_ver = ""
-gw_pid = 0
-
-try:
-    node_ver = subprocess.run(['node', '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
-except:
-    node_ver = ""
-
-try:
-    oc_out = subprocess.run([oc_bin, '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
-    import re
-    m = re.search(r'(\d+\.\d+\.\d+)', oc_out)
-    oc_ver = m.group(1) if m else ""
-except:
-    oc_ver = ""
-
-if gw_ok:
-    try:
-        pg = subprocess.run(['pgrep', '-f', 'openclaw gateway'], capture_output=True, text=True, timeout=3)
-        gw_pid = int(pg.stdout.strip().split('\n')[0]) if pg.stdout.strip() else 0
-    except:
-        gw_pid = 0
-    gw_ver = oc_ver
-
-output = {
+print(json.dumps({
     'wsl_ok': True,
     'ubuntu_ok': True,
-    'gateway_ok': gw_ok,
-    'gateway_version': gw_ver if gw_ver else None,
+    'gateway_ok': gw_up,
+    'gateway_version': oc_ver if oc_ver else None,
     'gateway_pid': gw_pid if gw_pid > 0 else None,
     'channels': channels,
     'active_sessions': total_sessions,
     'agents': agents,
     'node_version': node_ver if node_ver else None,
-    'openclaw_version': oc_ver if oc_ver else None
-}
-
-print(json.dumps(output))
+    'openclaw_version': oc_ver if oc_ver else None,
+}))
 PYEOF
-"##;
+"##
+    );
 
     match run_wsl_script("oc_snapshot.sh", script) {
         Ok(stdout) => {
