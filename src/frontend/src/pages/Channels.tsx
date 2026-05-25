@@ -436,6 +436,7 @@ export default function Channels() {
                     </button>
                   </div>
                   <p className="text-xs text-muted text-center">افتح واتساب على جوالك → الأجهزة المرتبطة → امسح الـ QR</p>
+                  <p className="text-[11px] text-warning text-center mt-1">⏱ الـ QR يتجدد كل ٢٠ ثانية — لا تغلق النافذة حتى يكتمل الربط</p>
                 </>
               )}
 
@@ -443,7 +444,7 @@ export default function Channels() {
                 <div className="flex flex-col items-center gap-4 py-12">
                   <Loader2 size={40} className="animate-spin text-primary" />
                   <p className="text-sm text-muted">جاري فتح الطرفية...</p>
-                  <p className="text-xs text-muted">قد يأخذ حتى ٦٠ ثانية</p>
+                  <p className="text-xs text-muted">ينتظر المسح حتى ٥ دقائق — QR يتجدد تلقائياً</p>
                 </div>
               )}
 

@@ -506,7 +506,7 @@ pub async fn get_agents_config() -> WslResult {
 #[tauri::command]
 pub async fn run_terminal_command(command: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        let wrapped = format!("timeout 60s script -q -c \"{}\" /dev/null 2>&1 || true", command);
+        let wrapped = format!("timeout 300s script -q -c \"{}\" /dev/null 2>&1 || true", command);
         exec_wsl(&wrapped)
     })
     .await
