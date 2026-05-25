@@ -466,7 +466,7 @@ pub async fn reconnect_channel(channel_name: String) -> WslResult {
 
 #[tauri::command]
 pub async fn login_whatsapp() -> WslResult {
-    tokio::task::spawn_blocking(|| exec_wsl("openclaw channels login --whatsapp 2>&1"))
+    tokio::task::spawn_blocking(|| exec_wsl("openclaw channels login --channel whatsapp 2>&1"))
         .await
         .unwrap_or_else(|e| WslResult {
             success: false,
@@ -479,7 +479,7 @@ pub async fn login_whatsapp() -> WslResult {
 #[tauri::command]
 pub async fn login_telegram(bot_token: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        exec_wsl(&format!("openclaw channels login --telegram --token {} 2>&1", bot_token))
+        exec_wsl(&format!("openclaw channels add --channel telegram --token {} 2>&1", bot_token))
     })
     .await
     .unwrap_or_else(|e| WslResult {
@@ -502,11 +502,12 @@ pub async fn get_agents_config() -> WslResult {
         })
 }
 
-/// بدء ربط واتساب — يرجع QR code عبر الامر مع timeout
+/// بدء ربط قناة — يرجع QR code/message مع timeout
 #[tauri::command]
 pub async fn start_whatsapp_pairing() -> WslResult {
     tokio::task::spawn_blocking(|| {
-        exec_wsl_timeout("openclaw channels login --whatsapp 2>&1 || true", 30)
+        // نجرب login مباشر مع --channel whatsapp
+        exec_wsl_timeout("openclaw channels login --channel whatsapp 2>&1 || true", 30)
     })
     .await
     .unwrap_or_else(|e| WslResult {
@@ -517,22 +518,19 @@ pub async fn start_whatsapp_pairing() -> WslResult {
     })
 }
 
-/// جلب القنوات والوكلاء بشكل مفصل
+/// جلب القنوات والوكلاء — يرجع raw health JSON (الـ frontend يحلله)
 #[tauri::command]
 pub async fn get_channels_detailed() -> String {
     tokio::task::spawn_blocking(|| {
-        let script = "curl -s --max-time 5 http://127.0.0.1:18789/health 2>/dev/null || echo '{}'";
-        let health_json = exec_wsl_timeout(script, 8);
-        if !health_json.success || health_json.stdout.trim().is_empty() {
-            return format!("{{\"error\":\"Gateway غير مستجيب\",\"agents\":[],\"channels\":{{}}}}");
+        // نرجع الـ raw JSON مباشرة بدل Python escaping المعقد
+        let script = "curl -s --max-time 5 http://127.0.0.1:18789/health 2>/dev/null";
+        let result = exec_wsl_timeout(script, 8);
+        let raw = result.stdout.trim().to_string();
+        if raw.is_empty() || raw == "null" {
+            return "{\"error\":\"Gateway غير مستجيب\",\"agents\":[],\"channels\":{}}".to_string();
         }
-        let raw = health_json.stdout.trim().to_string();
-        let script2 = format!(
-            "echo '{}' | python3 -c \"import json,sys; d=json.load(sys.stdin); chs={{}}; [chs.update({{k:{{'name':k,'provider':v.get('provider',''),'connected':v.get('connected',False),'health_state':v.get('healthState','unknown'),'enabled':v.get('enabled',False)}}}}) for k,v in d.get('channels',{{}}).items()]; ags=[{{'id':a.get('agentId',''),'name':a.get('name',''),'is_default':a.get('isDefault',False),'session_count':a.get('sessions',{{}}).get('count',0)}} for a in d.get('agents',[])]; print(json.dumps({{'agents':ags,'channels':chs}},ensure_ascii=False))\"",
-            raw.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ")
-        );
-        let result = exec_wsl_timeout(&script2, 8);
-        if result.success { result.stdout.trim().to_string() } else { format!("{{\"error\":\"{}\"}}", result.stderr.trim()) }
+        // ارجع الـ JSON كما هو — الـ frontend يفسره
+        raw
     })
     .await
     .unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e))

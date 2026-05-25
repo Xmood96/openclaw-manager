@@ -63,12 +63,33 @@ export default function Channels() {
     setError(null);
     try {
       const raw = await invoke<string>("get_channels_detailed");
-      const data = JSON.parse(raw);
-      if (data.error) { setError(data.error); setAgents([]); setChannels({}); }
+      // Parse raw health JSON
+      const health = JSON.parse(raw);
+      if (health.error) { setError(health.error); setAgents([]); setChannels({}); }
       else {
-        setAgents(data.agents || []);
-        setChannels(data.channels || {});
-        if (!activeAgent && data.agents?.length > 0) setActiveAgent(data.agents[0].id);
+        // Extract channels
+        const chs: Record<string, ChannelData> = {};
+        const chObj = health.channels || {};
+        for (const [name, ch] of Object.entries(chObj)) {
+          const c = ch as any;
+          chs[name] = {
+            name,
+            provider: c.provider || "",
+            connected: c.connected || false,
+            health_state: c.healthState || c.health_state || "unknown",
+            enabled: c.enabled !== false,
+          };
+        }
+        setChannels(chs);
+        // Extract agents
+        const ags = (health.agents || []).map((a: any) => ({
+          id: a.agentId || a.id || "",
+          name: a.name || a.agentId || "?",
+          is_default: a.isDefault || false,
+          session_count: (a.sessions?.count) || 0,
+        }));
+        setAgents(ags);
+        if (!activeAgent && ags.length > 0) setActiveAgent(ags[0].id);
       }
     } catch (e) {
       setError(`فشل جلب البيانات: ${e}`);
