@@ -119,10 +119,14 @@ export default function Channels() {
     setTimeout(fetchData, 2000);
   };
 
-  const handleWhatsAppPair = async () => {
+  const handleWhatsAppPair = () => {
     setWhatsappModal(true);
     setTerminalOutput("");
+  };
+
+  const handleEmbeddedTerminal = async () => {
     setTerminalLoading(true);
+    setTerminalOutput("");
     try {
       const r: any = await invoke("run_terminal_command", {
         command: "openclaw channels login --channel whatsapp",
@@ -132,6 +136,15 @@ export default function Channels() {
       setTerminalOutput(`❌ ${e}`);
     }
     setTerminalLoading(false);
+  };
+
+  const handleOpenExternalTerminal = async () => {
+    try {
+      await invoke("open_terminal_whatsapp");
+      showMsg("✅ تم فتح الطرفية — امسح QR code ثم اضغط تحديث");
+    } catch (e) {
+      showMsg(`❌ ${e}`);
+    }
   };
 
   const handleTelegramConnect = async () => {
@@ -358,7 +371,7 @@ export default function Channels() {
         )}
       </AnimatePresence>
 
-      {/* WhatsApp Modal — Embedded Terminal */}
+      {/* WhatsApp Modal — Dual option */}
       <AnimatePresence>
         {whatsappModal && (
           <motion.div
@@ -380,54 +393,46 @@ export default function Channels() {
                   <QrCode size={20} className="text-success" />
                   <h3 className="font-bold text-lg">ربط واتساب</h3>
                 </div>
-                <button
-                  onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }}
-                  className="p-1.5 rounded-lg hover:bg-bg transition-colors"
-                >
-                  <X size={18} />
-                </button>
+                <button onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }} className="p-1.5 rounded-lg hover:bg-bg"><X size={18} /></button>
               </div>
 
-              {terminalLoading ? (
+              {!terminalLoading && !terminalOutput && (
+                <>
+                  <p className="text-sm text-muted mb-4">اختر طريقة عرض QR code:</p>
+                  <div className="flex gap-3 mb-2">
+                    <button onClick={handleEmbeddedTerminal} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-primary text-white font-semibold hover:bg-primary-dark transition-all">
+                      <QrCode size={18} /> عرض داخل التطبيق
+                    </button>
+                    <button onClick={handleOpenExternalTerminal} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border-2 border-success text-success font-semibold hover:bg-success/5 transition-all">
+                      <QrCode size={18} /> فتح في نافذة خارجية
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted text-center">افتح واتساب على جوالك → الأجهزة المرتبطة → امسح الـ QR</p>
+                </>
+              )}
+
+              {terminalLoading && (
                 <div className="flex flex-col items-center gap-4 py-12">
                   <Loader2 size={40} className="animate-spin text-primary" />
                   <p className="text-sm text-muted">جاري فتح الطرفية...</p>
-                  <p className="text-xs text-muted">قد يأخذ دقيقة — تابع النافذة الطرفية للمسح</p>
+                  <p className="text-xs text-muted">قد يأخذ ٢٠-٣٠ ثانية</p>
                 </div>
-              ) : terminalOutput ? (
+              )}
+
+              {terminalOutput && (
                 <>
                   <div className="bg-[#0a0a0a] text-green-400 rounded-2xl p-4 overflow-y-auto flex-1 min-h-[300px] max-h-[55vh]">
-                    <pre className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all log-viewer">
-                      {terminalOutput}
-                    </pre>
+                    <pre className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all log-viewer">{terminalOutput}</pre>
                   </div>
                   <div className="flex gap-2 mt-3 flex-shrink-0">
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(terminalOutput);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 2000);
-                      }}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border text-sm hover:bg-bg"
-                    >
-                      {copied ? <CheckCircle2 size={14} className="text-success" /> : <Copy size={14} />}
-                      {copied ? "تم" : "نسخ"}
+                    <button onClick={() => { navigator.clipboard.writeText(terminalOutput); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border text-sm hover:bg-bg">
+                      {copied ? <CheckCircle2 size={14} className="text-success" /> : <Copy size={14} />}{copied ? "تم" : "نسخ"}
                     </button>
-                    <button
-                      onClick={fetchData}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm hover:bg-primary-dark"
-                    >
-                      <RefreshCw size={14} /> تحديث القنوات
-                    </button>
-                    <button
-                      onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }}
-                      className="px-4 py-2 rounded-xl border border-border text-sm hover:bg-bg"
-                    >
-                      إغلاق
-                    </button>
+                    <button onClick={fetchData} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm hover:bg-primary-dark"><RefreshCw size={14} /> تحديث القنوات</button>
+                    <button onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }} className="px-4 py-2 rounded-xl border border-border text-sm hover:bg-bg">إغلاق</button>
                   </div>
                 </>
-              ) : null}
+              )}
             </motion.div>
           </motion.div>
         )}

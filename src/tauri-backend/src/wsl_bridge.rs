@@ -502,15 +502,12 @@ pub async fn get_agents_config() -> WslResult {
         })
 }
 
-/// تشغيل أمر في WSL مع TTY وهمي عبر script — يرجع المخرجات كاملة
-/// يستخدم script -q لإنشاء pseudo-terminal → QR code يظهر بشكل صحيح
+/// تشغيل أمر في WSL مع TTY وهمي + timeout قصير (يكفي لظهور QR)
 #[tauri::command]
 pub async fn run_terminal_command(command: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        // script -q ينشئ PTY → الأمر يطلع output كأنه في طرفية حقيقية
-        // نستخدم double quotes للـ command لأن script يمررها كـ argument واحد
-        let wrapped = format!("script -q -c \"{}\" /dev/null 2>&1 || true", command);
-        exec_wsl_timeout(&wrapped, 120)
+        let wrapped = format!("timeout 25s script -q -c \"{}\" /dev/null 2>&1 || true", command);
+        exec_wsl(&wrapped)
     })
     .await
     .unwrap_or_else(|e| WslResult {
@@ -519,6 +516,18 @@ pub async fn run_terminal_command(command: String) -> WslResult {
         stderr: format!("خطأ: {}", e),
         exit_code: -1,
     })
+}
+
+/// فتح نافذة طرفية خارجية (cmd /c start) — QR code يظهر في نافذة مستقلة
+#[tauri::command]
+pub fn open_terminal_whatsapp() -> String {
+    match std::process::Command::new("cmd.exe")
+        .args(["/c", "start", "\"ربط واتساب\"", "wsl", "--", "bash", "-c", "openclaw channels login --channel whatsapp"])
+        .spawn()
+    {
+        Ok(_) => "✅ تم فتح الطرفية".into(),
+        Err(e) => format!("❌ {}", e),
+    }
 }
 
 /// جلب القنوات والوكلاء — يرجع raw health JSON (الـ frontend يحلله)
