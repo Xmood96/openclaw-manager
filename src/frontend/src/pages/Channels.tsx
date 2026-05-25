@@ -415,7 +415,7 @@ export default function Channels() {
                 <div className="flex flex-col items-center gap-4 py-12">
                   <Loader2 size={40} className="animate-spin text-primary" />
                   <p className="text-sm text-muted">جاري فتح الطرفية...</p>
-                  <p className="text-xs text-muted">قد يأخذ ٢٠-٣٠ ثانية</p>
+                  <p className="text-xs text-muted">قد يأخذ حتى ٤٥ ثانية</p>
                 </div>
               )}
 
