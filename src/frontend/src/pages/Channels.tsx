@@ -42,6 +42,8 @@ export default function Channels() {
 
   // Modals
   const [whatsappModal, setWhatsappModal] = useState(false);
+  const [terminalOutput, setTerminalOutput] = useState("");
+  const [terminalLoading, setTerminalLoading] = useState(false);
   const [telegramModal, setTelegramModal] = useState(false);
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramLoading, setTelegramLoading] = useState(false);
@@ -119,17 +121,17 @@ export default function Channels() {
 
   const handleWhatsAppPair = async () => {
     setWhatsappModal(true);
-  };
-
-  const handleOpenTerminal = async (mode: "whatsapp" | "channels") => {
-    const cmd = mode === "whatsapp" ? "open_terminal_whatsapp" : "open_terminal_channels";
+    setTerminalOutput("");
+    setTerminalLoading(true);
     try {
-      const msg = await invoke<string>(cmd);
-      showMsg(msg);
-      if (msg.includes("✅")) setTimeout(fetchData, 5000);
+      const r: any = await invoke("run_terminal_command", {
+        command: "openclaw config",
+      });
+      setTerminalOutput(r.success ? r.stdout : `❌ ${r.stderr}`);
     } catch (e) {
-      showMsg(`❌ ${e}`);
+      setTerminalOutput(`❌ ${e}`);
     }
+    setTerminalLoading(false);
   };
 
   const handleTelegramConnect = async () => {
@@ -356,7 +358,7 @@ export default function Channels() {
         )}
       </AnimatePresence>
 
-      {/* WhatsApp Modal — Open Terminal */}
+      {/* WhatsApp Modal — Embedded Terminal */}
       <AnimatePresence>
         {whatsappModal && (
           <motion.div
@@ -364,84 +366,68 @@ export default function Channels() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-            onClick={() => setWhatsappModal(false)}
+            onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }}
           >
             <motion.div
               initial={{ scale: 0.95 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.95 }}
-              className="bg-surface rounded-3xl p-6 max-w-lg w-full shadow-2xl"
+              className="bg-surface rounded-3xl p-5 max-w-2xl w-full shadow-2xl max-h-[85vh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <QrCode size={20} className="text-success" />
                   <h3 className="font-bold text-lg">ربط واتساب</h3>
                 </div>
-                <button onClick={() => setWhatsappModal(false)} className="p-1.5 rounded-lg hover:bg-bg"><X size={18} /></button>
-              </div>
-
-              <p className="text-sm text-muted mb-4">
-                راح تنفتح نافذة طرفية جديدة — امسح الـ QR code من واتساب على جوالك.
-                بعد ما يخلص الربط، ارجع للتطبيق واضغط تحديث.
-              </p>
-
-              <button
-                onClick={() => handleOpenTerminal("whatsapp")}
-                className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-success text-white font-semibold hover:bg-green-600 transition-all mb-3"
-              >
-                <QrCode size={18} /> فتح الطرفية لربط واتساب
-              </button>
-
-              <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText("wsl -- bash -c openclaw config");
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-bg transition-colors"
+                  onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }}
+                  className="p-1.5 rounded-lg hover:bg-bg transition-colors"
                 >
-                  {copied ? <CheckCircle2 size={14} className="text-success" /> : <Copy size={14} />}
-                  {copied ? "تم النسخ" : "نسخ الأمر"}
-                </button>
-                <button
-                  onClick={() => setWhatsappModal(false)}
-                  className="flex-1 px-3 py-2 rounded-xl border border-border text-sm hover:bg-bg transition-colors"
-                >
-                  إلغاء
+                  <X size={18} />
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      {/* QR Code Modal — OLD (deprecated, kept for reference) */}
-      <AnimatePresence>
-        {false && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-            onClick={() => {}}
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              className="bg-surface rounded-3xl p-6 max-w-lg w-full shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <QrCode size={20} className="text-success" />
-                  <h3 className="font-bold text-lg">QR Code</h3>
+              {terminalLoading ? (
+                <div className="flex flex-col items-center gap-4 py-12">
+                  <Loader2 size={40} className="animate-spin text-primary" />
+                  <p className="text-sm text-muted">جاري فتح الطرفية...</p>
+                  <p className="text-xs text-muted">قد يأخذ دقيقة — تابع النافذة الطرفية للمسح</p>
                 </div>
-                <button onClick={() => {}} className="p-1.5 rounded-lg hover:bg-bg"><X size={18} /></button>
-              </div>
-              <pre className="bg-sidebar text-sidebar-text p-4 rounded-2xl text-[8px] font-mono max-h-[300px] overflow-y-auto log-viewer" />
+              ) : terminalOutput ? (
+                <>
+                  <div className="bg-[#0a0a0a] text-green-400 rounded-2xl p-4 overflow-y-auto flex-1 min-h-[300px] max-h-[55vh]">
+                    <pre className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all log-viewer">
+                      {terminalOutput}
+                    </pre>
+                  </div>
+                  <div className="flex gap-2 mt-3 flex-shrink-0">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(terminalOutput);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border text-sm hover:bg-bg"
+                    >
+                      {copied ? <CheckCircle2 size={14} className="text-success" /> : <Copy size={14} />}
+                      {copied ? "تم" : "نسخ"}
+                    </button>
+                    <button
+                      onClick={fetchData}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm hover:bg-primary-dark"
+                    >
+                      <RefreshCw size={14} /> تحديث القنوات
+                    </button>
+                    <button
+                      onClick={() => { setWhatsappModal(false); setTerminalOutput(""); }}
+                      className="px-4 py-2 rounded-xl border border-border text-sm hover:bg-bg"
+                    >
+                      إغلاق
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </motion.div>
           </motion.div>
         )}

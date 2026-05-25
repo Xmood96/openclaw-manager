@@ -502,29 +502,21 @@ pub async fn get_agents_config() -> WslResult {
         })
 }
 
-/// فتح الطرفية لربط واتساب — يشغّل openclaw config في نافذة WSL منفصلة
+/// تشغيل أمر في WSL مع TTY وهمي عبر script — يرجع المخرجات كاملة
 #[tauri::command]
-pub fn open_terminal_whatsapp() -> String {
-    // استخدام cmd /c start لفتح نافذة جديدة
-    match std::process::Command::new("cmd.exe")
-        .args(["/c", "start", "ربط واتساب", "wsl", "--", "bash", "-c", "echo '🔗 جاري فتح إعداد القنوات...' && openclaw config"])
-        .spawn()
-    {
-        Ok(_) => "✅ تم فتح الطرفية — امسح QR code في النافذة الجديدة".into(),
-        Err(e) => format!("❌ فشل فتح الطرفية: {}", e),
-    }
-}
-
-/// فتح الطرفية لإدارة القنوات بشكل عام
-#[tauri::command]
-pub fn open_terminal_channels() -> String {
-    match std::process::Command::new("cmd.exe")
-        .args(["/c", "start", "إدارة القنوات", "wsl", "--", "bash", "-c", "openclaw channels add"])
-        .spawn()
-    {
-        Ok(_) => "✅ تم فتح الطرفية لإدارة القنوات".into(),
-        Err(e) => format!("❌ فشل فتح الطرفية: {}", e),
-    }
+pub async fn run_terminal_command(command: String) -> WslResult {
+    tokio::task::spawn_blocking(move || {
+        // script -q ينشئ PTY وهمي → الأمر يفكر إنه في طرفية حقيقية
+        let wrapped = format!("script -q -c '{}' /dev/null 2>&1 || true", command.replace('\'', "'\\\"'\"'"));
+        exec_wsl_timeout(&wrapped, 60)
+    })
+    .await
+    .unwrap_or_else(|e| WslResult {
+        success: false,
+        stdout: String::new(),
+        stderr: format!("خطأ: {}", e),
+        exit_code: -1,
+    })
 }
 
 /// جلب القنوات والوكلاء — يرجع raw health JSON (الـ frontend يحلله)
