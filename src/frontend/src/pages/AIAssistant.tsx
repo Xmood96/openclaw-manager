@@ -132,16 +132,23 @@ export default function AIAssistant() {
   }, []);
 
   useEffect(() => {
+    const timer = setTimeout(() => setInitLoading(false), 5000); // safety timeout
     (async () => {
       try {
-        setHasAI(await invoke<boolean>("agent_has_deepseek_key"));
+        try { setHasAI(await invoke<boolean>("agent_has_deepseek_key")); } catch {}
       } catch {}
       try {
         const saved = await invoke<string>("agent_load_session");
-        if (saved && saved !== "{}") setSession(JSON.parse(saved));
-        else await startNewSession();
+        if (saved && saved !== "{}" && saved.length > 10) {
+          const parsed = JSON.parse(saved);
+          if (parsed.session_id) setSession(parsed);
+          else await startNewSession();
+        } else await startNewSession();
       } catch { await startNewSession(); }
+      clearTimeout(timer);
+      setInitLoading(false);
     })();
+    return () => clearTimeout(timer);
   }, [startNewSession]);
 
   useEffect(() => {
