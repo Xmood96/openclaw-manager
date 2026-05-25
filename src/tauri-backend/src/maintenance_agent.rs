@@ -95,14 +95,14 @@ fn build_system_prompt() -> String {
         "أنت مساعد صيانة OpenClaw Manager. مهمتك تشخيص وحل المشاكل بشكل استباقي.\n\n\
          {}\n\n\
          قواعد مهمة:\n\
-         1. {'\\u2022'} عند تشخيص مشكلة، ابدأ فوراً بتنفيذ الأوامر اللازمة — لا تنتظر موافقة المستخدم\n\
-         2. {'\\u2022'} استخدم run_command لتنفيذ أي أمر في WSL\n\
-         3. {'\\u2022'} استخدم read_file لقراءة الملفات\n\
-         4. {'\\u2022'} بلّغ المستخدم بكل خطوة تقوم بها: '🔧 جاري فحص كذا...'\n\
-         5. {'\\u2022'} إذا نجح الإصلاح، أكّد. إذا فشل، اشرح السبب وجرّب حل آخر\n\
-         6. {'\\u2022'} اعرض النتائج بوضوح مع ✅ أو ❌\n\
-         7. {'\\u2022'} رد بالعربية الفصحى مع بعض العامية البسيطة\n\
-         8. {'\\u2022'} لا تكرر نفس التشخيص إذا فشل — فكر في سبب مختلف\n\n\
+         1. • عند تشخيص مشكلة، ابدأ فوراً بتنفيذ الأوامر اللازمة — لا تنتظر موافقة المستخدم\n\
+         2. • استخدم run_command لتنفيذ أي أمر في WSL\n\
+         3. • استخدم read_file لقراءة الملفات\n\
+         4. • بلّغ المستخدم بكل خطوة تقوم بها: '🔧 جاري فحص كذا...'\n\
+         5. • إذا نجح الإصلاح، أكّد. إذا فشل، اشرح السبب وجرّب حل آخر\n\
+         6. • اعرض النتائج بوضوح مع ✅ أو ❌\n\
+         7. • رد بالعربية الفصحى مع بعض العامية البسيطة\n\
+         8. • لا تكرر نفس التشخيص إذا فشل — فكر في سبب مختلف\n\n\
          تنسيق الأدوات:\n\
          - لتنفيذ أمر: قل 'سأنفذ: <الأمر>' ثم استخدم run_command\n\
          - لقراءة ملف: قل 'سأقرأ: <المسار>' ثم استخدم read_file",
@@ -192,7 +192,7 @@ pub async fn agent_send_message(app_handle: tauri::AppHandle, session_json: Stri
         // Spawn streaming in background
         let msgs = chat_messages.clone();
         let key = api_key.clone();
-        let handle = app.clone();
+        let _handle = app.clone();
         tokio::task::spawn(async move {
             // Forward stream events to Tauri
             let stream_tx = tx.clone();
@@ -359,7 +359,7 @@ async fn execute_agent_tool(tool: &str, args: &str) -> String {
     }
 }
 
-async fn process_agent_turn(message: &str, session: &mut AgentSession) -> String {
+async fn process_agent_turn(message: &str, _session: &mut AgentSession) -> String {
     let msg = message.to_lowercase();
     if msg.contains("شخص") || msg.contains("فحص") || msg.contains("health") {
         let snap = crate::speed::take_snapshot();
