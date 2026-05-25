@@ -1,6 +1,6 @@
-# 📊 الوضع الحالي — Current Status v0.2
+# 📊 الوضع الحالي — Current Status v0.4
 
-> آخر تحديث: 2026-05-23
+> آخر تحديث: 2026-05-25
 
 ---
 
@@ -8,31 +8,29 @@
 
 | المكون | الحالة | التفاصيل |
 |--------|--------|----------|
-| Rust Backend | ✅ مترجم | 9 وحدات (جديد: app_state) |
+| Rust Backend | ✅ مترجم | 11 وحدة |
 | React Frontend | ✅ مبني | 7 صفحات |
-| Tauri Integration | ✅ يعمل | 37 Tauri command |
+| Tauri Integration | ✅ يعمل | 47 Tauri command |
 | Build (Windows) | ✅ جاهز | `build_windows.bat` محدث |
-| WSL Bridge | ✅ ديناميكي | اكتشاف تلقائي للتوزيعة |
+| WSL Bridge | ✅ v0.4 | Temp-file approach — تجنب مشاكل escaping |
 | WebSocket | ✅ مستمر | tokio-tungstenite + auto-reconnect |
 | Firebase Auth | ✅ يعمل | login, register, check_session, logout, refresh |
 | Device Binding | ✅ دائم | UUID مخزّن في %APPDATA% |
 | Secure Storage | ✅ أساسي | app_state module للتخزين المحلي |
 | Session Check | ✅ يعمل | يقرأ من session.json ويتحقق من الصلاحية |
+| Gateway Control | ✅ | systemctl --user + curl HTTP check |
+| Dashboard Snapshot | ✅ | قراءة الجلسات والوكلاء من ملفات JSON |
 
-## 2. تفاصيل الإصلاحات (v0.2)
+## 2. تفاصيل الإصلاحات (v0.4)
 
 | المشكلة | الحل | الحالة |
 |---------|------|--------|
-| WSL distro hardcoded "Ubuntu" | Dynamic detection via wsl -l -q + LazyLock | ✅ |
-| WebSocket session غير مستمر | tokio-tungstenite + async runloop + auto-reconnect | ✅ |
-| Device ID عشوائي | تخزين UUID في %APPDATA%/openclaw-manager/device-id | ✅ |
-| check_session() لا يعمل | session.json مع تحقق صلاحية التوكن | ✅ |
-| لا channel management | 6 أوامر جديدة: list, remove, reconnect, login whatsapp/telegram, agents config | ✅ |
-| OpenClawNoConfig guide مفقود | إضافة guide كامل لمرحلة التهيئة | ✅ |
-| OpenClawStopped guide مفقود | إضافة guide كامل لمرحلة التشغيل | ✅ |
-| build_windows.bat قديم | تحديث كامل مع فحص Tauri CLI v2 | ✅ |
-| Firebase error messages خام | ترجمة رسائل Firebase للعربية | ✅ |
-| No logout command | أمر logout + refresh_token جديد | ✅ |
+| WSL inline commands تفشل (`$()`، `X=$HOME`) | Temp-file approach: كتابة السكربت في `/tmp` ثم تنفيذه | ✅ |
+| `openclaw gateway start/restart` يعلق | systemctl --user start/stop/restart | ✅ |
+| سكربتات Python المضمنة تسبب IndentationError | إزالة Python المضمن — قراءة من ملفات JSON مباشرة | ✅ |
+| اكتشاف OpenClaw ضعيف (which فقط) | 3 طرق: exec_wsl + wsl.exe مباشر + TCP من ويندوز | ✅ |
+| orcherstrator يعيد تنفيذ health checks | استخدام speed::take_snapshot() الموحّد | ✅ |
+| PATH ويندوز يتسرب ويسبب أخطاء bash | clean_linux_path() — مسار Linux نظيف فقط | ✅ |
 
 ## 3. المتبقي في Phase 2
 

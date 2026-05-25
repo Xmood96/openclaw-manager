@@ -6,3 +6,6 @@ dist/
 .DS_Store
 Thumbs.db
 workspaces/
+src/tauri-backend/.openclaw/
+src/tauri-backend/gen/
+src/tauri-backend/~/
