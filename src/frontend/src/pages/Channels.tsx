@@ -16,6 +16,7 @@ import {
   Key,
   Shield,
   Users,
+  Copy,
 } from "lucide-react";
 
 interface ChannelData {
@@ -40,15 +41,14 @@ export default function Channels() {
   const [error, setError] = useState<string | null>(null);
 
   // Modals
-  const [qrModal, setQrModal] = useState(false);
-  const [qrData, setQrData] = useState("");
-  const [qrLoading, setQrLoading] = useState(false);
+  const [whatsappModal, setWhatsappModal] = useState(false);
   const [telegramModal, setTelegramModal] = useState(false);
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramLoading, setTelegramLoading] = useState(false);
   const [allowlistModal, setAllowlistModal] = useState(false);
   const [allowlist, setAllowlist] = useState<string[]>([]);
   const [allowlistInput, setAllowlistInput] = useState("");
+  const [copied, setCopied] = useState(false);
 
   // Action feedback
   const [actionMsg, setActionMsg] = useState<string | null>(null);
@@ -118,16 +118,18 @@ export default function Channels() {
   };
 
   const handleWhatsAppPair = async () => {
-    setQrModal(true);
-    setQrLoading(true);
-    setQrData("");
+    setWhatsappModal(true);
+  };
+
+  const handleOpenTerminal = async (mode: "whatsapp" | "channels") => {
+    const cmd = mode === "whatsapp" ? "open_terminal_whatsapp" : "open_terminal_channels";
     try {
-      const r: any = await invoke("start_whatsapp_pairing");
-      setQrData(r.success ? r.stdout : `❌ ${r.stderr}`);
+      const msg = await invoke<string>(cmd);
+      showMsg(msg);
+      if (msg.includes("✅")) setTimeout(fetchData, 5000);
     } catch (e) {
-      setQrData(`❌ ${e}`);
+      showMsg(`❌ ${e}`);
     }
-    setQrLoading(false);
   };
 
   const handleTelegramConnect = async () => {
@@ -354,15 +356,15 @@ export default function Channels() {
         )}
       </AnimatePresence>
 
-      {/* QR Code Modal */}
+      {/* WhatsApp Modal — Open Terminal */}
       <AnimatePresence>
-        {qrModal && (
+        {whatsappModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-            onClick={() => { setQrModal(false); setQrData(""); }}
+            onClick={() => setWhatsappModal(false)}
           >
             <motion.div
               initial={{ scale: 0.95 }}
@@ -376,28 +378,70 @@ export default function Channels() {
                   <QrCode size={20} className="text-success" />
                   <h3 className="font-bold text-lg">ربط واتساب</h3>
                 </div>
-                <button
-                  onClick={() => { setQrModal(false); setQrData(""); }}
-                  className="p-1.5 rounded-lg hover:bg-bg transition-colors"
-                >
-                  <X size={18} />
-                </button>
+                <button onClick={() => setWhatsappModal(false)} className="p-1.5 rounded-lg hover:bg-bg"><X size={18} /></button>
               </div>
 
-              {qrLoading ? (
-                <div className="flex flex-col items-center gap-4 py-8">
-                  <Loader2 size={40} className="animate-spin text-primary" />
-                  <p className="text-sm text-muted">جاري توليد QR code...</p>
-                </div>
-              ) : qrData ? (
-                <pre className="bg-sidebar text-sidebar-text p-4 rounded-2xl text-xs font-mono max-h-[350px] overflow-y-auto log-viewer">
-                  {qrData}
-                </pre>
-              ) : null}
-
-              <p className="text-xs text-muted mt-3 text-center">
-                افتح واتساب على جوالك → الأجهزة المرتبطة → امسح الـ QR
+              <p className="text-sm text-muted mb-4">
+                راح تنفتح نافذة طرفية جديدة — امسح الـ QR code من واتساب على جوالك.
+                بعد ما يخلص الربط، ارجع للتطبيق واضغط تحديث.
               </p>
+
+              <button
+                onClick={() => handleOpenTerminal("whatsapp")}
+                className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-success text-white font-semibold hover:bg-green-600 transition-all mb-3"
+              >
+                <QrCode size={18} /> فتح الطرفية لربط واتساب
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText("wsl -- bash -c openclaw config");
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-bg transition-colors"
+                >
+                  {copied ? <CheckCircle2 size={14} className="text-success" /> : <Copy size={14} />}
+                  {copied ? "تم النسخ" : "نسخ الأمر"}
+                </button>
+                <button
+                  onClick={() => setWhatsappModal(false)}
+                  className="flex-1 px-3 py-2 rounded-xl border border-border text-sm hover:bg-bg transition-colors"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* QR Code Modal — OLD (deprecated, kept for reference) */}
+      <AnimatePresence>
+        {false && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+            onClick={() => {}}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-surface rounded-3xl p-6 max-w-lg w-full shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <QrCode size={20} className="text-success" />
+                  <h3 className="font-bold text-lg">QR Code</h3>
+                </div>
+                <button onClick={() => {}} className="p-1.5 rounded-lg hover:bg-bg"><X size={18} /></button>
+              </div>
+              <pre className="bg-sidebar text-sidebar-text p-4 rounded-2xl text-[8px] font-mono max-h-[300px] overflow-y-auto log-viewer" />
             </motion.div>
           </motion.div>
         )}

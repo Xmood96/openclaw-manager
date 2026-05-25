@@ -37,6 +37,8 @@ pub fn run() {
             wsl_bridge::login_telegram,
             wsl_bridge::get_agents_config,
             wsl_bridge::start_whatsapp_pairing,
+            wsl_bridge::open_terminal_whatsapp,
+            wsl_bridge::open_terminal_channels,
             wsl_bridge::get_channels_detailed,
             wsl_bridge::get_agent_allowlist,
             // WebSocket Client

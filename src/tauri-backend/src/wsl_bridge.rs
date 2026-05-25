@@ -502,20 +502,29 @@ pub async fn get_agents_config() -> WslResult {
         })
 }
 
-/// بدء ربط قناة — يرجع QR code/message مع timeout
+/// فتح الطرفية لربط واتساب — يشغّل openclaw config في نافذة WSL منفصلة
 #[tauri::command]
-pub async fn start_whatsapp_pairing() -> WslResult {
-    tokio::task::spawn_blocking(|| {
-        // نجرب login مباشر مع --channel whatsapp
-        exec_wsl_timeout("openclaw channels login --channel whatsapp 2>&1 || true", 30)
-    })
-    .await
-    .unwrap_or_else(|e| WslResult {
-        success: false,
-        stdout: String::new(),
-        stderr: format!("خطأ: {}", e),
-        exit_code: -1,
-    })
+pub fn open_terminal_whatsapp() -> String {
+    // استخدام cmd /c start لفتح نافذة جديدة
+    match std::process::Command::new("cmd.exe")
+        .args(["/c", "start", "ربط واتساب", "wsl", "--", "bash", "-c", "echo '🔗 جاري فتح إعداد القنوات...' && openclaw config"])
+        .spawn()
+    {
+        Ok(_) => "✅ تم فتح الطرفية — امسح QR code في النافذة الجديدة".into(),
+        Err(e) => format!("❌ فشل فتح الطرفية: {}", e),
+    }
+}
+
+/// فتح الطرفية لإدارة القنوات بشكل عام
+#[tauri::command]
+pub fn open_terminal_channels() -> String {
+    match std::process::Command::new("cmd.exe")
+        .args(["/c", "start", "إدارة القنوات", "wsl", "--", "bash", "-c", "openclaw channels add"])
+        .spawn()
+    {
+        Ok(_) => "✅ تم فتح الطرفية لإدارة القنوات".into(),
+        Err(e) => format!("❌ فشل فتح الطرفية: {}", e),
+    }
 }
 
 /// جلب القنوات والوكلاء — يرجع raw health JSON (الـ frontend يحلله)
