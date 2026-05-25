@@ -39,6 +39,7 @@ pub fn run() {
             wsl_bridge::get_channels_detailed,
             wsl_bridge::get_agent_allowlist,
             wsl_bridge::run_terminal_command,
+            wsl_bridge::smart_whatsapp_pairing,
             wsl_bridge::open_terminal_whatsapp,
             // WebSocket Client
             oc_client::connect_to_gateway,

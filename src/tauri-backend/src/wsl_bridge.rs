@@ -504,9 +504,20 @@ pub async fn get_agents_config() -> WslResult {
 
 /// تشغيل أمر في WSL مع TTY وهمي + timeout قصير (يكفي لظهور QR)
 #[tauri::command]
-pub async fn run_terminal_command(command: String) -> WslResult {
-    tokio::task::spawn_blocking(move || {
-        let wrapped = format!("timeout 300s script -q -c \"{}\" /dev/null 2>&1 || true", command);
+pub async fn smart_whatsapp_pairing() -> WslResult {
+    tokio::task::spawn_blocking(|| {
+        // 1. فحص إذا فيه حساب واتساب موجود
+        let check = exec_wsl_timeout("openclaw channels list 2>&1 | grep -qi whatsapp && echo EXISTS || echo NOT_FOUND", 8);
+        let has_account = check.stdout.trim().contains("EXISTS");
+
+        // 2. اختر الأمر المناسب
+        let cmd = if has_account {
+            "openclaw channels login --channel whatsapp 2>&1"
+        } else {
+            "openclaw channels add --channel whatsapp 2>&1 && openclaw channels login --channel whatsapp 2>&1"
+        };
+
+        let wrapped = format!("timeout 300s script -q -c \"{}\" /dev/null 2>&1 || true", cmd);
         exec_wsl(&wrapped)
     })
     .await
