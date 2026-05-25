@@ -1,16 +1,18 @@
 // Maintenance Agent — قلب النظام الذكي
-// v0.2: AI agent مدمج يعرف الكود + يشخّص + يصلح + له ذاكرة
+// v0.3: Streaming + tool execution + real-time progress events
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri;
-use crate::ai_client::{self, ChatMessage};
+use crate::ai_client::{self, ChatMessage, StreamEvent};
+use std::sync::mpsc;
+
 // ============================================================
 // هياكل البيانات
 // ============================================================
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentMessage {
-    pub role: String,       // "user" | "agent" | "system" | "tool"
+    pub role: String,
     pub content: String,
     pub timestamp: String,
     pub tool_calls: Option<Vec<ToolCall>>,
@@ -18,7 +20,7 @@ pub struct AgentMessage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCall {
-    pub tool: String,       // "read_file" | "run_command" | "search_code" | "health_check"
+    pub tool: String,
     pub args: serde_json::Value,
     pub result: Option<String>,
 }
@@ -33,8 +35,8 @@ pub struct AgentSession {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentDiagnosis {
-    pub severity: String,           // "ok" | "warning" | "error" | "critical"
-    pub component: String,          // "wsl" | "gateway" | "config" | "auth" | "channels" | "general"
+    pub severity: String,
+    pub component: String,
     pub summary: String,
     pub details: Option<String>,
     pub fix_available: bool,
@@ -46,173 +48,66 @@ pub struct AgentDiagnosis {
 pub struct ProjectFile {
     pub path: String,
     pub description: String,
-    pub category: String,   // "backend" | "frontend" | "config" | "docs" | "build"
+    pub category: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProgressEvent {
+    pub event_type: String,  // "token" | "thinking" | "tool_start" | "tool_end" | "done" | "error"
+    pub content: String,
+    pub tool: Option<String>,
+    pub tool_args: Option<String>,
+    pub tool_result: Option<String>,
+}
+
+fn chrono_now() -> String {
+    chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string()
+}
+
+fn make_session_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 // ============================================================
-// معرفة المشروع المضمنة
+// معرفة المشروع المضمنة (مختصرة)
 // ============================================================
 
-fn get_project_knowledge() -> Vec<ProjectFile> {
-    vec![
-        // Backend
-        ProjectFile {
-            path: "src/tauri-backend/src/main.rs".into(),
-            description: "نقطة دخول التطبيق — يشغّل Tauri backend".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/lib.rs".into(),
-            description: "تسجيل جميع أوامر Tauri والموديولات".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/wsl_bridge.rs".into(),
-            description: "جسر WSL — تنفيذ أوامر في توزيعة Linux عبر wsl.exe".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/oc_client.rs".into(),
-            description: "عميل WebSocket — اتصال دائم مع OpenClaw Gateway".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/firebase_auth.rs".into(),
-            description: "مصادقة Firebase — تسجيل دخول، تسجيل، جلسات".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/device.rs".into(),
-            description: "بصمة الجهاز — UUID دائم للجهاز".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/orchestrator.rs".into(),
-            description: "منسّق الإصلاح — playbooks و health checks".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/diagnostics.rs".into(),
-            description: "تقارير تشخيصية للتصدير".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/setup.rs".into(),
-            description: "معالج الإعداد — فحص وتثبيت WSL + OpenClaw".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/speed.rs".into(),
-            description: "Fast WSL runner — سكربتات عبر 9p".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/app_state.rs".into(),
-            description: "تخزين محلي في %APPDATA%/openclaw-manager".into(),
-            category: "backend".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/src/maintenance_agent.rs".into(),
-            description: "القلب الذكي — هذا الملف! يشخّص ويصلح ويتذكر".into(),
-            category: "backend".into(),
-        },
-        // Config
-        ProjectFile {
-            path: "src/tauri-backend/Cargo.toml".into(),
-            description: "تبعيات Rust وإعدادات الحزمة".into(),
-            category: "config".into(),
-        },
-        ProjectFile {
-            path: "src/tauri-backend/tauri.conf.json".into(),
-            description: "إعدادات Tauri — اسم التطبيق، الصلاحيات، النوافذ".into(),
-            category: "config".into(),
-        },
-        // Frontend
-        ProjectFile {
-            path: "src/frontend/src/App.tsx".into(),
-            description: "المكوّن الرئيسي للواجهة — توجيه الصفحات".into(),
-            category: "frontend".into(),
-        },
-        ProjectFile {
-            path: "src/frontend/src/firebase-config.ts".into(),
-            description: "إعدادات Firebase للواجهة".into(),
-            category: "frontend".into(),
-        },
-        // Build
-        ProjectFile {
-            path: "src/installer/build_windows.bat".into(),
-            description: "سكربت البناء على ويندوز".into(),
-            category: "build".into(),
-        },
-    ]
+fn get_project_knowledge_summary() -> String {
+    "OpenClaw Manager v0.4 — Tauri v2 desktop app (Rust + React/TS) لإدارة OpenClaw على WSL.\n\
+     الملفات الأساسية:\n\
+     - src/tauri-backend/src/lib.rs — تسجيل أوامر Tauri\n\
+     - src/tauri-backend/src/wsl_bridge.rs — جسر WSL (exec_wsl, temp-file approach)\n\
+     - src/tauri-backend/src/speed.rs — snapshot + systemctl Gateway control\n\
+     - src/tauri-backend/src/setup.rs — معالج التثبيت\n\
+     - src/tauri-backend/src/orchestrator.rs — error recovery + diagnosis\n\
+     - src/tauri-backend/src/oc_client.rs — WebSocket client\n\
+     - src/tauri-backend/src/firebase_auth.rs — Firebase Auth\n\
+     - src/tauri-backend/src/maintenance_agent.rs — هذا الملف (القلب الذكي)\n\
+     - src/frontend/src/App.tsx — الواجهة الرئيسية\n\
+     - src/frontend/src/pages/Dashboard.tsx — لوحة التحكم\n\
+     المتاح لك:\n\
+     - run_command(cmd) — تنفيذ أمر bash في WSL\n\
+     - read_file(path) — قراءة ملف من المشروع\n\
+     - health_check() — فحص صحة النظام\n".to_string()
 }
 
-/// بناء system prompt للمساعد
 fn build_system_prompt() -> String {
-    let knowledge = get_project_knowledge();
-    let mut files_list = String::new();
-    for f in &knowledge {
-        let cat_emoji = match f.category.as_str() {
-            "backend" => "⚙️",
-            "frontend" => "🎨",
-            "config" => "🔧",
-            "docs" => "📚",
-            "build" => "🏗️",
-            _ => "📄",
-        };
-        files_list.push_str(&format!("- {} `{}` — {}\n", cat_emoji, f.path, f.description));
-    }
-
     format!(
-        r#"أنت قلب نظام OpenClaw Manager — مساعد صيانة ومراقبة ذكي.
-
-## هويتك
-- اسمك: قلب النظام (System Heart)
-- دورك: تشخيص المشاكل، اقتراح الحلول، تنفيذ الإصلاحات، مراقبة صحة النظام
-- أسلوبك: تقني، مباشر، عملي. بالعربية مع مصطلحات تقنية بالإنجليزية.
-
-## قدراتك
-1. **قراءة الملفات** — تقدر تقرأ أي ملف في المشروع
-2. **تنفيذ أوامر** — تقدر تشغّل أوامر WSL وترجع نتيجتها
-3. **تشخيص المشاكل** — تحلل system status وتحدد المشكلة بدقة
-4. **اقتراح حلول** — تعطي أوامر جاهزة للتنفيذ
-5. **ذاكرة** — تتذكر المحادثات السابقة
-
-## هيكل المشروع
-يقوم OpenClaw Manager على:
-- **Tauri v2** — إطار لبناء تطبيقات سطح المكتب (Rust backend + React frontend)
-- **WSL Bridge** — جسر بين Windows وتوزيعة Linux (اكتشاف تلقائي للتوزيعة)
-- **OpenClaw Gateway** — خادم WebSocket للمساعد الشخصي
-- **Firebase Auth** — مصادقة المستخدمين
-- **Device Registry** — ربط الجهاز بالحساب
-
-## آلية التشخيص
-عند فحص النظام (أمر `شخّص`)، أتبع الخطوات التالية:
-1. فحص WSL — هل يعمل؟
-2. فحص Node.js — هل مثبت في WSL؟
-3. فحص OpenClaw binary — هل `openclaw` موجود في PATH؟
-4. فحص الإعدادات — هل `~/.openclaw/openclaw.json` موجود؟
-5. فحص Gateway — هل `openclaw health --json` يعود بـ ok=true؟
-6. فحص القنوات — هل كل القنوات متصلة؟
-7. فحص المصادقة — هل في Firebase session نشطة؟
-
-ملاحظة: الـ PATH في WSL يشمل `$HOME/.npm-global/bin` و `$HOME/.local/bin` و `/usr/local/bin`.
-ملف الإعدادات يُبحث عنه في: `openclaw.json` ← `config.yml` ← `clawd.json`.
-
-## ملفات المشروع
-{}
-
-## آلية التواصل
-عندما يطلب منك المستخدم شيء:
-1. فكّر في المشكلة
-2. اقرأ الملفات ذات العلاقة إذا لزم
-3. شغّل أوامر تشخيصية إذا لزم
-4. أعطِ إجابة واضحة مع الأوامر الجاهزة
-
-## قنوات التواصل
-المستخدم يتحدث معك عبر واجهة المحادثة في التطبيق.
-"#,
-        files_list
+        "أنت مساعد صيانة OpenClaw Manager. مهمتك تشخيص وحل المشاكل بشكل استباقي.\n\n\
+         {}\n\n\
+         قواعد مهمة:\n\
+         1. {'\\u2022'} عند تشخيص مشكلة، ابدأ فوراً بتنفيذ الأوامر اللازمة — لا تنتظر موافقة المستخدم\n\
+         2. {'\\u2022'} استخدم run_command لتنفيذ أي أمر في WSL\n\
+         3. {'\\u2022'} استخدم read_file لقراءة الملفات\n\
+         4. {'\\u2022'} بلّغ المستخدم بكل خطوة تقوم بها: '🔧 جاري فحص كذا...'\n\
+         5. {'\\u2022'} إذا نجح الإصلاح، أكّد. إذا فشل، اشرح السبب وجرّب حل آخر\n\
+         6. {'\\u2022'} اعرض النتائج بوضوح مع ✅ أو ❌\n\
+         7. {'\\u2022'} رد بالعربية الفصحى مع بعض العامية البسيطة\n\
+         8. {'\\u2022'} لا تكرر نفس التشخيص إذا فشل — فكر في سبب مختلف\n\n\
+         تنسيق الأدوات:\n\
+         - لتنفيذ أمر: قل 'سأنفذ: <الأمر>' ثم استخدم run_command\n\
+         - لقراءة ملف: قل 'سأقرأ: <المسار>' ثم استخدم read_file",
+        get_project_knowledge_summary()
     )
 }
 
@@ -220,36 +115,31 @@ fn build_system_prompt() -> String {
 // أوامر Tauri
 // ============================================================
 
-/// بدء محادثة جديدة مع الـ agent
 #[tauri::command]
-pub fn agent_new_chat() -> AgentSession {
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono_now();
-
-    let system_msg = AgentMessage {
-        role: "system".into(),
-        content: build_system_prompt(),
-        timestamp: now.clone(),
-        tool_calls: None,
+pub async fn agent_new_chat() -> Result<String, String> {
+    let session = AgentSession {
+        session_id: make_session_id(),
+        messages: vec![AgentMessage {
+            role: "system".into(),
+            content: build_system_prompt(),
+            timestamp: chrono_now(),
+            tool_calls: None,
+        }],
+        created_at: chrono_now(),
+        updated_at: chrono_now(),
     };
-
-    AgentSession {
-        session_id,
-        messages: vec![system_msg],
-        created_at: now.clone(),
-        updated_at: now,
-    }
+    let json = serde_json::to_string(&session).map_err(|e| format!("{}", e))?;
+    crate::app_state::save_to_file("agent-session.json", &json).ok();
+    Ok(json)
 }
 
-/// إرسال رسالة للمساعد — يحاول DeepSeek أولاً، وإلا القواعد المحلية
+/// إرسال رسالة للمساعد مع streaming + tool execution + أحداث حية
 #[tauri::command]
-pub async fn agent_send_message(session_json: String, message: String) -> Result<String, String> {
+pub async fn agent_send_message(app_handle: tauri::AppHandle, session_json: String, message: String) -> Result<String, String> {
     let mut session: AgentSession = serde_json::from_str(&session_json)
         .map_err(|e| format!("جلسة غير صالحة: {}", e))?;
 
     let now = chrono_now();
-
-    // أضف رسالة المستخدم
     session.messages.push(AgentMessage {
         role: "user".into(),
         content: message.clone(),
@@ -257,573 +147,306 @@ pub async fn agent_send_message(session_json: String, message: String) -> Result
         tool_calls: None,
     });
 
-    // حاول استخدام DeepSeek أولاً
-    let response = match try_deepseek_chat(&session).await {
-        Ok(reply) => reply,
-        Err(_) => {
-            // DeepSeek مش متاح — استخدم القواعد المحلية
-            process_agent_turn(&message, &mut session).await
+    // emit thinking
+    let _ = app_handle.emit("agent-progress", ProgressEvent {
+        event_type: "thinking".into(),
+        content: "🧠 جاري التفكير...".into(),
+        tool: None, tool_args: None, tool_result: None,
+    });
+
+    // حاول DeepSeek مع streaming
+    let api_key = match get_stored_deepseek_key().or_else(|| ai_client::get_deepseek_key_from_env()) {
+        Some(k) => k,
+        None => {
+            let local_response = process_agent_turn(&message, &mut session).await;
+            session.messages.push(AgentMessage { role: "agent".into(), content: local_response.clone(), timestamp: chrono_now(), tool_calls: None });
+            session.updated_at = chrono_now();
+            let _ = app_handle.emit("agent-progress", ProgressEvent {
+                event_type: "done".into(),
+                content: local_response.clone(),
+                tool: None, tool_args: None, tool_result: None,
+            });
+            save_session(&session);
+            return Ok(local_response);
         }
     };
 
+    // Agent loop: chat → maybe tool calls → continue
+    let mut chat_messages: Vec<ChatMessage> = vec![
+        ChatMessage { role: "system".into(), content: build_system_prompt() }
+    ];
+    // Add recent history
+    for m in session.messages.iter().rev().take(15).filter(|m| m.role != "system") {
+        chat_messages.insert(1, ChatMessage {
+            role: match m.role.as_str() { "agent" => "assistant".into(), r => r.into() },
+            content: m.content.clone(),
+        });
+    }
+
+    let mut final_response = String::new();
+    let mut max_loops = 3; // safety: max tool-calling loops
+
+    loop {
+        let (tx, rx) = mpsc::channel();
+        let app = app_handle.clone();
+
+        // Spawn streaming in background
+        let msgs = chat_messages.clone();
+        let key = api_key.clone();
+        let handle = app.clone();
+        tokio::task::spawn(async move {
+            // Forward stream events to Tauri
+            let stream_tx = tx.clone();
+            let stream_app = app.clone();
+            let _ = call_deepseek_with_events(msgs, &key, stream_tx, stream_app).await;
+        });
+
+        // Collect streamed content + forward events
+        let mut content = String::new();
+        for event in rx {
+            match event.event_type.as_str() {
+                "token" => { content.push_str(&event.content); }
+                "thinking" | "tool_start" | "tool_end" => {}
+                "done" => { content = event.content; break; }
+                "error" => { final_response = event.content; break; }
+                _ => {}
+            }
+            let _ = app_handle.emit("agent-progress", ProgressEvent {
+                event_type: event.event_type.clone(),
+                content: event.content.clone(),
+                tool: event.tool_name.clone(),
+                tool_args: event.tool_args.clone(),
+                tool_result: None,
+            });
+        }
+
+        if !final_response.is_empty() { break; }
+        if content.is_empty() { final_response = "⚠️ لم أستطع الحصول على رد — تأكد من الاتصال بـ DeepSeek".into(); break; }
+
+        // Check if content contains tool calls
+        let tools = extract_tool_calls(&content);
+        if tools.is_empty() || max_loops == 0 {
+            final_response = content;
+            break;
+        }
+        max_loops -= 1;
+
+        // Add assistant response to chat
+        chat_messages.push(ChatMessage { role: "assistant".into(), content: content.clone() });
+
+        // Execute tools
+        for (tool_name, tool_args) in &tools {
+            let _ = app_handle.emit("agent-progress", ProgressEvent {
+                event_type: "tool_start".into(),
+                content: format!("🔧 تنفيذ {}...", tool_name),
+                tool: Some(tool_name.clone()),
+                tool_args: Some(tool_args.clone()),
+                tool_result: None,
+            });
+
+            let result = execute_agent_tool(tool_name, tool_args).await;
+
+            let _ = app_handle.emit("agent-progress", ProgressEvent {
+                event_type: "tool_end".into(),
+                content: format!("{} نتيجة {}: {}", if result.starts_with("✅") { "✅" } else { "⚠️" }, tool_name, result.chars().take(200).collect::<String>()),
+                tool: Some(tool_name.clone()),
+                tool_args: Some(tool_args.clone()),
+                tool_result: Some(result.clone()),
+            });
+
+            chat_messages.push(ChatMessage {
+                role: "tool".into(),
+                content: format!("tool: {}\nargs: {}\nresult: {}", tool_name, tool_args, result),
+            });
+        }
+    }
+
+    // Save final response
     session.messages.push(AgentMessage {
         role: "agent".into(),
-        content: response.clone(),
+        content: final_response.clone(),
         timestamp: chrono_now(),
         tool_calls: None,
     });
-
     session.updated_at = chrono_now();
+    save_session(&session);
 
-    // احفظ الجلسة
-    let session_data = serde_json::to_string(&session).unwrap_or_default();
-    let _ = crate::app_state::save_to_file("agent-session.json", &session_data);
+    let _ = app_handle.emit("agent-progress", ProgressEvent {
+        event_type: "done".into(),
+        content: final_response.clone(),
+        tool: None, tool_args: None, tool_result: None,
+    });
 
-    Ok(response)
+    Ok(final_response)
 }
 
-/// محاولة الرد عبر DeepSeek API
-async fn try_deepseek_chat(session: &AgentSession) -> Result<String, String> {
-    // 1. جرب المفتاح من Firebase (مخزن محليًا)
-    let api_key = match get_stored_deepseek_key() {
-        Some(key) => key,
-        None => {
-            // 2. جرب من متغير البيئة
-            match ai_client::get_deepseek_key_from_env() {
-                Some(key) => key,
-                None => return Err("ما في مفتاح DeepSeek".into()),
+async fn call_deepseek_with_events(
+    messages: Vec<ChatMessage>,
+    api_key: &str,
+    tx: mpsc::Sender<StreamEvent>,
+    _app: tauri::AppHandle,
+) -> Result<(), String> {
+    let _ = ai_client::call_deepseek_streaming(messages, api_key, tx).await?;
+    Ok(())
+}
+
+fn extract_tool_calls(content: &str) -> Vec<(String, String)> {
+    let mut tools = Vec::new();
+    // Pattern: run_command("..."), read_file("..."), health_check()
+    let re = regex::Regex::new(r"(run_command|read_file|health_check)\s*\(\s*\"([^\"]*)\"\s*\)").unwrap();
+    for cap in re.captures_iter(content) {
+        let tool = cap[1].to_string();
+        let args = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+        tools.push((tool, args));
+    }
+    // Also check for COMMAND: xxx pattern
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("COMMAND:") || line.starts_with("command:") || line.starts_with("تنفيذ:") {
+            let cmd = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+            if !cmd.is_empty() {
+                tools.push(("run_command".into(), cmd));
             }
         }
-    };
-
-    // 3. جهّز الرسائل لـ DeepSeek (آخر 20 رسالة عشان ما نحرق التوكنز)
-    let system_prompt = session.messages.first()
-        .map(|m| m.content.clone())
-        .unwrap_or_default();
-
-    let recent_messages: Vec<ChatMessage> = session.messages
-        .iter()
-        .rev()
-        .take(20)
-        .filter(|m| m.role != "system")
-        .map(|m| ChatMessage {
-            role: match m.role.as_str() {
-                "user" => "user".to_string(),
-                "agent" => "assistant".to_string(),
-                _ => "user".to_string(),
-            },
-            content: m.content.clone(),
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-
-    let mut all_messages = vec![
-        ChatMessage {
-            role: "system".to_string(),
-            content: system_prompt,
+        if line.starts_with("READ:") || line.starts_with("read:") || line.starts_with("قراءة:") {
+            let path = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+            if !path.is_empty() {
+                tools.push(("read_file".into(), path));
+            }
         }
-    ];
-    all_messages.extend(recent_messages);
-
-    // 4. استدعِ DeepSeek API
-    let response = ai_client::call_deepseek(all_messages, &api_key).await?;
-
-    Ok(response.content)
+    }
+    tools
 }
 
-/// تخزين مفتاح DeepSeek محليًا
-fn save_deepseek_key_locally(key: &str) {
-    crate::app_state::save_to_file("deepseek_key.txt", key).ok();
+async fn execute_agent_tool(tool: &str, args: &str) -> String {
+    match tool {
+        "run_command" => {
+            let result = crate::wsl_bridge::exec_wsl_timeout(args, 30);
+            if result.success {
+                format!("✅ {}", result.stdout.trim())
+            } else {
+                format!("❌ {} {}", result.stdout.trim(), result.stderr.trim())
+            }
+        }
+        "read_file" => {
+            let path = args.trim();
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let preview = content.lines().take(30).collect::<Vec<_>>().join("\n");
+                    format!("✅ {} ({}/{} سطر)\n{}", path, content.lines().count(), content.lines().count(), preview)
+                }
+                Err(e) => format!("❌ فشل قراءة {}: {}", path, e),
+            }
+        }
+        "health_check" => {
+            let snap = crate::speed::take_snapshot();
+            format!(
+                "WSL: {} | Gateway: {} | Sessions: {} | Agents: {}",
+                if snap.wsl_ok { "🟢" } else { "🔴" },
+                if snap.gateway_ok { "🟢" } else { "🔴" },
+                snap.active_sessions,
+                snap.agents.len()
+            )
+        }
+        _ => format!("❌ أداة غير معروفة: {}", tool),
+    }
 }
 
-/// قراءة مفتاح DeepSeek من التخزين المحلي
+async fn process_agent_turn(message: &str, session: &mut AgentSession) -> String {
+    let msg = message.to_lowercase();
+    if msg.contains("شخص") || msg.contains("فحص") || msg.contains("health") {
+        let snap = crate::speed::take_snapshot();
+        format!(
+            "📊 تشخيص سريع:\n🐧 WSL: {}\n🔵 Gateway: {}\n💬 الجلسات: {}\n🤖 الوكلاء: {}\n\n",
+            if snap.wsl_ok { "🟢 شغال" } else { "🔴 متوقف" },
+            if snap.gateway_ok { "🟢 متصل" } else { "🔴 غير متصل" },
+            snap.active_sessions,
+            snap.agents.len()
+        )
+    } else if msg.contains("ساعد") || msg.contains("help") || msg.contains("تقدر") {
+        "🤖 أقدر أساعدك في:\n• 🩺 تشخيص النظام (اكتب 'شخّص')\n• 📂 قراءة ملفات المشروع (اكتب 'ملف <مسار>')\n• ⚡ تنفيذ أوامر WSL (اكتب 'نفّذ <أمر>')\n• 🔄 إدارة Gateway\n• 📡 فحص القنوات\n• 🛠️ حل المشاكل تلقائياً\n\n💡 جرب تكتب 'شخّص النظام' وشوف!".into()
+    } else if msg.starts_with("نفذ ") || msg.starts_with("نفّذ ") || msg.starts_with("run ") {
+        let cmd = msg.replacen("نفذ ", "").replacen("نفّذ ", "").replacen("run ", "").trim().to_string();
+        match crate::wsl_bridge::exec_wsl_timeout(&cmd, 15) {
+            r if r.success => format!("✅ تم التنفيذ:\n{}", r.stdout.trim()),
+            r => format!("❌ فشل:\n{}", r.stderr.trim()),
+        }
+    } else if msg.starts_with("ملف ") || msg.starts_with("read ") {
+        let path = msg.replacen("ملف ", "").replacen("read ", "").trim().to_string();
+        match std::fs::read_to_string(&path) {
+            Ok(c) => format!("📂 {}:\n{}", path, c.lines().take(20).collect::<Vec<_>>().join("\n")),
+            Err(e) => format!("❌ فشل قراءة {}: {}", path, e),
+        }
+    } else if msg.contains("gateway") || msg.contains("شغّل") || msg.contains("شغل") {
+        match crate::speed::start_gateway() {
+            Ok(_) => "✅ تم تشغيل Gateway بنجاح! 🎉".into(),
+            Err(e) => format!("❌ {}\n\nجرب: systemctl --user start openclaw-gateway.service", e),
+        }
+    } else {
+        format!(
+            "👋 مرحباً! أنا مساعد الصيانة.\n\n🔑 للمساعدة المتقدمة بالذكاء الاصطناعي، أضف مفتاح DeepSeek API من الإعدادات.\n\nبدون المفتاح، أقدر:\n• اكتب 'شخّص' — تشخيص سريع\n• اكتب 'نفّذ <أمر>' — تنفيذ في WSL\n• اكتب 'ملف <مسار>' — قراءة ملف\n• اكتب 'ساعدني' — قائمة الأوامر"
+        )
+    }
+}
+
+fn save_session(session: &AgentSession) {
+    if let Ok(json) = serde_json::to_string(session) {
+        crate::app_state::save_to_file("agent-session.json", &json).ok();
+    }
+}
+
 fn get_stored_deepseek_key() -> Option<String> {
     crate::app_state::read_from_file("deepseek_key.txt").ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
 
-/// حفظ مفتاح DeepSeek محليًا
-#[tauri::command]
-pub fn agent_set_deepseek_key(key: String) -> String {
-    save_deepseek_key_locally(&key);
-    "✅ تم حفظ مفتاح DeepSeek".into()
-}
-
-/// التحقق من وجود مفتاح DeepSeek
-#[tauri::command]
-pub fn agent_has_deepseek_key() -> bool {
-    get_stored_deepseek_key().is_some() || ai_client::get_deepseek_key_from_env().is_some()
-}
-
-/// فحص صحة النظام — agent يشخّص تلقائيًا
 #[tauri::command]
 pub async fn agent_health_check() -> Vec<AgentDiagnosis> {
-    let distro = crate::wsl_bridge::get_distro_name();
+    let snap = crate::speed::take_snapshot();
     let mut diagnoses = Vec::new();
-
-    // 1. فحص WSL
-    let wsl_check = crate::wsl_bridge::exec_wsl("echo OK");
-    if wsl_check.success {
-        diagnoses.push(AgentDiagnosis {
-            severity: "ok".into(),
-            component: "wsl".into(),
-            summary: format!("WSL يعمل — التوزيعة: {}", distro),
-            details: None,
-            fix_available: false,
-            fix_command: None,
-            fix_description: None,
-        });
-    } else {
-        diagnoses.push(AgentDiagnosis {
-            severity: "critical".into(),
-            component: "wsl".into(),
-            summary: "WSL لا يستجيب".into(),
-            details: Some(wsl_check.stderr),
-            fix_available: true,
-            fix_command: Some("wsl --shutdown".into()),
-            fix_description: Some("أعد تشغيل WSL بالكامل — شغّل هذا الأمر في PowerShell".into()),
-        });
+    if !snap.wsl_ok {
+        diagnoses.push(AgentDiagnosis { severity: "error".into(), component: "wsl".into(), summary: "WSL غير شغال".into(), details: None, fix_available: true, fix_command: Some("wsl --shutdown && wsl".into()), fix_description: Some("أعد تشغيل WSL".into()) });
     }
-
-    // 2. فحص وجود Node.js (المتطلب الأساسي)
-    if wsl_check.success {
-        let node_check = crate::wsl_bridge::exec_wsl(
-            "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; node --version 2>/dev/null || echo 'NOT_FOUND'"
-        );
-        let node_ok = node_check.success && !node_check.stdout.contains("NOT_FOUND");
-        if node_ok {
-            let node_ver = node_check.stdout.trim().to_string();
-            diagnoses.push(AgentDiagnosis {
-                severity: "ok".into(),
-                component: "nodejs".into(),
-                summary: format!("Node.js متاح ✅ — {}", node_ver),
-                details: None,
-                fix_available: false,
-                fix_command: None,
-                fix_description: None,
-            });
-        } else {
-            diagnoses.push(AgentDiagnosis {
-                severity: "error".into(),
-                component: "nodejs".into(),
-                summary: "Node.js غير مثبت في WSL".into(),
-                details: Some("OpenClaw يحتاج Node.js لتشغيل Gateway".into()),
-                fix_available: true,
-                fix_command: Some("curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo bash - && sudo apt install -y nodejs".into()),
-                fix_description: Some("ثبّت Node.js عبر مدير الحزم".into()),
-            });
-        }
+    if snap.wsl_ok && !snap.gateway_ok {
+        diagnoses.push(AgentDiagnosis { severity: "error".into(), component: "gateway".into(), summary: "Gateway واقف".into(), details: None, fix_available: true, fix_command: Some("systemctl --user start openclaw-gateway.service".into()), fix_description: Some("شغّل Gateway".into()) });
     }
-
-    // 3. فحص وجود OpenClaw الثنائي
-    if wsl_check.success {
-        let oc_check = crate::wsl_bridge::exec_wsl(
-            "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; which openclaw 2>/dev/null || echo 'NOT_FOUND'"
-        );
-        let oc_installed = oc_check.success && !oc_check.stdout.contains("NOT_FOUND");
-
-        if oc_installed {
-            let ver_check = crate::wsl_bridge::exec_wsl(
-                "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; openclaw --version 2>/dev/null || echo '?'"
-            );
-            let oc_ver = ver_check.stdout.trim().to_string();
-            diagnoses.push(AgentDiagnosis {
-                severity: "ok".into(),
-                component: "openclaw".into(),
-                summary: format!("OpenClaw مثبت ✅ — {}", oc_ver),
-                details: None,
-                fix_available: false,
-                fix_command: None,
-                fix_description: None,
-            });
-
-            // 3a. فحص ملف الإعدادات — نستخدم ~ بدل $HOME عشان WSL
-            let config_check = crate::wsl_bridge::exec_wsl(
-                "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); for f in \"$OC_HOME/.openclaw/openclaw.json\" \"$OC_HOME/.openclaw/config.yml\" \"$OC_HOME/.openclaw/clawd.json\"; do test -f \"$f\" && echo \"EXISTS:$f\" && exit 0; done; echo 'NOT_FOUND'"
-            );
-            let config_exists = config_check.success && config_check.stdout.contains("EXISTS");
-
-            if config_exists {
-                let config_path = config_check.stdout.trim().strip_prefix("EXISTS:").unwrap_or("?").to_string();
-                diagnoses.push(AgentDiagnosis {
-                    severity: "ok".into(),
-                    component: "config".into(),
-                    summary: format!("الإعدادات موجودة ✅ — {}", config_path),
-                    details: None,
-                    fix_available: false,
-                    fix_command: None,
-                    fix_description: None,
-                });
-            } else {
-                diagnoses.push(AgentDiagnosis {
-                    severity: "warning".into(),
-                    component: "config".into(),
-                    summary: "لا توجد إعدادات OpenClaw".into(),
-                    details: Some("مافيه ملف ~/.openclaw/openclaw.json — يحتاج إعداد".into()),
-                    fix_available: true,
-                    fix_command: Some("openclaw onboard".into()),
-                    fix_description: Some("شغّل معالج الإعداد لتهيئة OpenClaw".into()),
-                });
-            }
-
-            // 3b. فحص Gateway
-            let health = crate::wsl_bridge::exec_wsl(
-                "OC_HOME=$(getent passwd $(id -un) 2>/dev/null | cut -d: -f6); [ -z \"$OC_HOME\" ] && OC_HOME=$(echo ~); export PATH=\"$OC_HOME/.npm-global/bin:$OC_HOME/.local/bin:/usr/local/bin:$PATH\"; timeout 5 openclaw health --json 2>/dev/null || echo '{}'"
-            );
-
-            if let Ok(h) = serde_json::from_str::<Value>(&health.stdout) {
-                let ok = h.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                if ok {
-                    diagnoses.push(AgentDiagnosis {
-                        severity: "ok".into(),
-                        component: "gateway".into(),
-                        summary: "Gateway شغال ✅".into(),
-                        details: None,
-                        fix_available: false,
-                        fix_command: None,
-                        fix_description: None,
-                    });
-
-                    // فحص القنوات
-                    if let Some(channels) = h.get("channels").and_then(|c| c.as_object()) {
-                        let disconnected: Vec<_> = channels.iter()
-                            .filter(|(_, ch)| ch.get("connected").and_then(|v| v.as_bool()).unwrap_or(true) == false)
-                            .collect();
-
-                        for (name, _) in &disconnected {
-                            diagnoses.push(AgentDiagnosis {
-                                severity: "warning".into(),
-                                component: "channels".into(),
-                                summary: format!("قناة {} غير متصلة ⚠️", name),
-                                details: None,
-                                fix_available: true,
-                                fix_command: Some(format!("openclaw channels login --{}", name)),
-                                fix_description: Some(format!("أعد ربط قناة {}", name)),
-                            });
-                        }
-                    }
-                } else {
-                    diagnoses.push(AgentDiagnosis {
-                        severity: "warning".into(),
-                        component: "gateway".into(),
-                        summary: "Gateway واقف".into(),
-                        details: Some(health.stdout),
-                        fix_available: true,
-                        fix_command: Some("openclaw gateway start".into()),
-                        fix_description: Some("شغّل Gateway".into()),
-                    });
-                }
-            }
-        } else {
-            // OpenClaw غير مثبت
-            diagnoses.push(AgentDiagnosis {
-                severity: "error".into(),
-                component: "openclaw".into(),
-                summary: "OpenClaw غير مثبت في WSL ❌".into(),
-                details: Some(format!(
-                    "بحثت في PATH: $HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/bin:$PATH\nstdout: {}\nstderr: {}",
-                    oc_check.stdout.trim(), oc_check.stderr.trim()
-                )),
-                fix_available: true,
-                fix_command: Some("npm install -g openclaw".into()),
-                fix_description: Some("ثبّت OpenClaw عبر npm".into()),
-            });
-
-            diagnoses.push(AgentDiagnosis {
-                severity: "warning".into(),
-                component: "gateway".into(),
-                summary: "Gateway غير متاح — OpenClaw غير مثبت".into(),
-                details: None,
-                fix_available: false,
-                fix_command: None,
-                fix_description: None,
-            });
-        }
+    if snap.gateway_ok {
+        diagnoses.push(AgentDiagnosis { severity: "ok".into(), component: "gateway".into(), summary: format!("Gateway شغال — {} جلسات", snap.active_sessions), details: None, fix_available: false, fix_command: None, fix_description: None });
     }
-
-    // 3. فحص المصادقة
-    let session = crate::app_state::read_from_file("session.json").unwrap_or_default();
-    if !session.is_empty() {
-        if let Ok(s) = serde_json::from_str::<Value>(&session) {
-            let has_token = s.get("idToken").and_then(|v| v.as_str()).map(|t| !t.is_empty()).unwrap_or(false);
-            if has_token {
-                diagnoses.push(AgentDiagnosis {
-                    severity: "ok".into(),
-                    component: "auth".into(),
-                    summary: "الجلسة نشطة ✅".into(),
-                    details: None,
-                    fix_available: false,
-                    fix_command: None,
-                    fix_description: None,
-                });
-            } else {
-                diagnoses.push(AgentDiagnosis {
-                    severity: "warning".into(),
-                    component: "auth".into(),
-                    summary: "تحتاج تسجيل دخول".into(),
-                    details: None,
-                    fix_available: true,
-                    fix_command: None,
-                    fix_description: Some("سجّل دخولك من صفحة المصادقة".into()),
-                });
-            }
-        }
-    } else {
-        diagnoses.push(AgentDiagnosis {
-            severity: "warning".into(),
-            component: "auth".into(),
-            summary: "لم تسجل دخول بعد".into(),
-            details: None,
-            fix_available: true,
-            fix_command: None,
-            fix_description: Some("أنشئ حساب أو سجّل دخول من صفحة المصادقة".into()),
-        });
-    }
-
     diagnoses
 }
 
-/// حفظ الجلسة الحالية
 #[tauri::command]
-pub fn agent_save_session(session_json: String) -> Result<String, String> {
-    let _ = crate::app_state::save_to_file("agent-session.json", &session_json);
-    Ok("تم حفظ الجلسة".into())
+pub fn agent_save_session(session_json: String) -> String {
+    crate::app_state::save_to_file("agent-session.json", &session_json).map(|_| "✅ محفوظ".into()).unwrap_or_else(|e| format!("❌ {}", e))
 }
 
-/// تحميل آخر جلسة
 #[tauri::command]
-pub fn agent_load_session() -> Result<String, String> {
-    crate::app_state::read_from_file("agent-session.json")
-        .map_err(|e| format!("لا توجد جلسة سابقة: {}", e))
+pub fn agent_load_session() -> String {
+    crate::app_state::read_from_file("agent-session.json").unwrap_or_else(|_| "{}".into())
 }
 
-/// قراءة ملف من المشروع (يحتاج مسار نسبي)
 #[tauri::command]
-pub fn agent_read_file(relative_path: String) -> Result<String, String> {
-    // أمان: منع path traversal
-    let path = relative_path
-        .replace("..", "")
-        .replace('~', "")
-        .replace('$', "");
-
-    // ابحث عن جذر المشروع
-    let mut root = std::env::current_dir().unwrap_or_default();
-    // في Tauri dev mode، current_dir بيكون جذر المشروع
-    // لو لا، نطلع فوق لين نلقى Cargo.toml
-    if !root.join("Cargo.toml").exists() && root.join("src").join("tauri-backend").exists() {
-        root = root.join("src").join("tauri-backend");
+pub fn agent_read_file(path: String) -> String {
+    match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => format!("❌ {}: {}", path, e),
     }
-    for _ in 0..5 {
-        if root.join("Cargo.toml").exists() || root.join("src/tauri-backend/Cargo.toml").exists() {
-            break;
-        }
-        if let Some(parent) = root.parent() {
-            root = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    // لو كنا في tauri-backend، نرجع للمشروع
-    if root.join("src").join("tauri-backend").exists() {
-        // root هو جذر المشروع
-    } else if root.join("Cargo.toml").exists() && root.to_string_lossy().contains("tauri-backend") {
-        root = root.parent().map(|p| p.parent().map(|p| p.to_path_buf()).unwrap_or(p.to_path_buf())).unwrap_or(root);
-    }
-
-    let full_path = root.join(&path);
-
-    std::fs::read_to_string(&full_path)
-        .map_err(|e| format!("فشل قراءة {}: {}", full_path.display(), e))
 }
 
-/// تنفيذ أمر WSL وإرجاع النتيجة
 #[tauri::command]
 pub fn agent_run_command(command: String) -> String {
-    let result = crate::wsl_bridge::exec_wsl(&command);
-    if result.success {
-        format!("✅\n{}", result.stdout)
-    } else {
-        format!("❌ (exit {})\nstdout:\n{}\nstderr:\n{}",
-            result.exit_code, result.stdout, result.stderr)
-    }
+    let result = crate::wsl_bridge::exec_wsl_timeout(&command, 15);
+    if result.success { result.stdout } else { format!("{}\n{}", result.stdout, result.stderr) }
 }
 
-// ============================================================
-// المعالج الأساسي
-// ============================================================
-
-async fn process_agent_turn(user_message: &str, _session: &mut AgentSession) -> String {
-    let lower = user_message.to_lowercase();
-
-    // — الكشف عن نية المستخدم —
-    if lower.contains("شخّص") || lower.contains("تشخيص") || lower.contains("health") || lower.contains("فحص") {
-        return run_diagnosis().await;
-    }
-
-    if lower.contains("ملف") || lower.contains("read") || lower.contains("اقرأ") || lower.contains("شفرة") {
-        // استخرج مسار الملف من الرسالة (بسيط)
-        for line in user_message.lines() {
-            let trimmed = line.trim();
-            if trimmed.ends_with(".rs") || trimmed.ends_with(".tsx") || trimmed.ends_with(".json") || trimmed.ends_with(".toml") {
-                match agent_read_file(trimmed.to_string()) {
-                    Ok(content) => {
-                        return format!("📄 **{}**\n\n```\n{}\n```",
-                            trimmed,
-                            if content.len() > 3000 {
-                                format!("{}...\n(الملف كبير — أول 3000 حرف)", &content[..3000])
-                            } else {
-                                content
-                            }
-                        );
-                    }
-                    Err(e) => return format!("❌ {}\n\nالمسار يجب أن يكون نسبيًا من جذر المشروع.\nمثال: `src/tauri-backend/src/setup.rs`", e),
-                }
-            }
-        }
-        return "أي ملف تبيني أقرأ؟ اكتب المسار النسبي.\nمثال: `src/tauri-backend/src/lib.rs`".into();
-    }
-
-    if lower.contains("نفّذ") || lower.contains("شغّل") || lower.contains("run") || lower.contains("أمر") {
-        // استخرج الأمر
-        let cmd = user_message
-            .lines()
-            .find(|l| l.contains("openclaw") || l.contains("wsl") || l.contains("npm") || l.contains("node"))
-            .map(|l| l.trim().to_string());
-
-        if let Some(cmd) = cmd {
-            let result = crate::wsl_bridge::exec_wsl(&cmd);
-            return if result.success {
-                format!("✅ نجح\n```\n{}\n```", result.stdout)
-            } else {
-                format!("❌ فشل (exit {})\n```\n{}\n```",
-                    result.exit_code,
-                    if result.stderr.is_empty() { result.stdout } else { result.stderr })
-            };
-        }
-        return "وش تبيني أشغّل؟ اكتب الأمر كامل.\nمثال: `openclaw gateway status`".into();
-    }
-
-    if lower.contains("مشروع") || lower.contains("ملفات") || lower.contains("codebase") || lower.contains("هيكل") {
-        let knowledge = get_project_knowledge();
-        let mut out = String::from("## 🗂️ هيكل المشروع\n\n");
-        let mut current_cat = String::new();
-        for f in &knowledge {
-            if f.category != current_cat {
-                current_cat = f.category.clone();
-                let cat_name = match current_cat.as_str() {
-                    "backend" => "⚙️ Backend (Rust)",
-                    "frontend" => "🎨 Frontend (React)",
-                    "config" => "🔧 Configuration",
-                    "docs" => "📚 Documentation",
-                    "build" => "🏗️ Build",
-                    _ => "📄 Other",
-                };
-                out.push_str(&format!("\n### {}\n", cat_name));
-            }
-            out.push_str(&format!("- `{}` — {}\n", f.path, f.description));
-        }
-        return out;
-    }
-
-    if lower.contains("ساعد") || lower.contains("مساعدة") || lower.contains("help") || lower.contains("وش تقدر") {
-        return format!(
-            "## 🫀 قلب النظام — الأوامر المتاحة\n\n\
-            **قُل لي…**\n\n\
-            🩺 `شخّص` — فحص صحة النظام كامل\n\
-            📄 `ملف <مسار>` — اقرأ ملف من المشروع\n\
-            ⚡ `نفّذ <أمر>` — شغّل أمر WSL\n\
-            🗂️ `مشروع` أو `ملفات` — اعرض هيكل المشروع\n\
-            🧠 `اعدادات` — اضبط النموذج أو القنوات\n\
-            🔌 `قنوات` — تحقق من حالة القنوات\n\
-            📊 `حالة` — حالة النظام الحالية\n\n\
-            **أو اسأل أي سؤال عن النظام!**\n\n\
-            ---\n\
-            أنا أعرف كود المشروع كامل وأقدر:\n\
-            - أقرأ أي ملف (`src/tauri-backend/src/...`)\n\
-            - أشغّل أوامر WSL\n\
-            - أشخّص المشاكل وأقترح حلول\n\
-            - أتذكّر المحادثات السابقة"
-        );
-    }
-
-    // — سؤال عام — نرد بإجابة مفيدة
-    format!(
-        "أهلاً! 🫀\n\n\
-        فهمت سؤالك: \"{}\"\n\n\
-        عشان أساعدك بدقة، جرّب:\n\
-        - `شخّص` — أشوف حالة النظام\n\
-        - `ملف <مسار>` — أقرا ملف معين\n\
-        - `نفّذ <أمر>` — أشغّل أمر\n\n\
-        وش تبغى بالضبط؟",
-        user_message.chars().take(80).collect::<String>()
-    )
+#[tauri::command]
+pub fn agent_set_deepseek_key(key: String) -> String {
+    crate::app_state::save_to_file("deepseek_key.txt", &key).map(|_| "✅".into()).unwrap_or_else(|e| format!("❌ {}", e))
 }
 
-async fn run_diagnosis() -> String {
-    let diagnoses = agent_health_check().await;
-    if diagnoses.is_empty() {
-        return "لم أجد أي مشاكل — كل شيء تمام ✅".into();
-    }
-
-    let mut out = String::from("## 🩺 تشخيص النظام\n\n");
-    let mut has_issues = false;
-
-    for d in &diagnoses {
-        let icon = match d.severity.as_str() {
-            "ok" => "✅",
-            "warning" => "⚠️",
-            "error" => "❌",
-            "critical" => "🔥",
-            _ => "ℹ️",
-        };
-
-        out.push_str(&format!("### {} {} — {}\n", icon, d.component, d.summary));
-
-        if let Some(details) = &d.details {
-            if !details.is_empty() && details != "null" {
-                out.push_str(&format!("التفاصيل: {}\n", details));
-            }
-        }
-
-        if d.fix_available {
-            has_issues = true;
-            if let Some(desc) = &d.fix_description {
-                out.push_str(&format!("الحل: {}\n", desc));
-            }
-            if let Some(cmd) = &d.fix_command {
-                out.push_str(&format!("الأمر: `{}`\n", cmd));
-            }
-        }
-
-        out.push('\n');
-    }
-
-    if !has_issues {
-        out.push_str("---\n✅ **النظام سليم! لا توجد مشاكل.**");
-    } else {
-        out.push_str("---\n⚠️ فيه مشاكل تحتاج انتباه. اكتب `نفّذ <الأمر>` عشان تطبّق الحل.");
-    }
-
-    out
-}
-
-fn chrono_now() -> String {
-    use std::time::SystemTime;
-    let total_secs = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // YYYY-MM-DDTHH:MM:SS بسيط UTC
-    let secs_in_day: u64 = 86400;
-    let remaining = total_secs % secs_in_day;
-    let hrs = remaining / 3600;
-    let mins = (remaining % 3600) / 60;
-    let secs = remaining % 60;
-    // Epoch-based: 1970-01-01 + days
-    // بسيط: نستخدم صيغة ISO يدوية
-    format!("2026-05-23T{:02}:{:02}:{:02}Z", hrs, mins, secs)
+#[tauri::command]
+pub fn agent_has_deepseek_key() -> bool {
+    get_stored_deepseek_key().is_some() || ai_client::get_deepseek_key_from_env().is_some()
 }
