@@ -503,12 +503,14 @@ pub async fn get_agents_config() -> WslResult {
 }
 
 /// تشغيل أمر في WSL مع TTY وهمي عبر script — يرجع المخرجات كاملة
+/// يستخدم script -q لإنشاء pseudo-terminal → QR code يظهر بشكل صحيح
 #[tauri::command]
 pub async fn run_terminal_command(command: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        // script -q ينشئ PTY وهمي → الأمر يفكر إنه في طرفية حقيقية
-        let wrapped = format!("script -q -c '{}' /dev/null 2>&1 || true", command.replace('\'', "'\\\"'\"'"));
-        exec_wsl_timeout(&wrapped, 60)
+        // script -q ينشئ PTY → الأمر يطلع output كأنه في طرفية حقيقية
+        // نستخدم double quotes للـ command لأن script يمررها كـ argument واحد
+        let wrapped = format!("script -q -c \"{}\" /dev/null 2>&1 || true", command);
+        exec_wsl_timeout(&wrapped, 120)
     })
     .await
     .unwrap_or_else(|e| WslResult {

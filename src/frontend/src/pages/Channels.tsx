@@ -125,7 +125,7 @@ export default function Channels() {
     setTerminalLoading(true);
     try {
       const r: any = await invoke("run_terminal_command", {
-        command: "openclaw config",
+        command: "openclaw channels login --channel whatsapp",
       });
       setTerminalOutput(r.success ? r.stdout : `❌ ${r.stderr}`);
     } catch (e) {
