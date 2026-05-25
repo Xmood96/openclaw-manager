@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 
 function Settings() {
   const [deepseekKey, setDeepseekKey] = useState("");
-  const [saved, setSaved] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMsg, setSaveMsg] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);

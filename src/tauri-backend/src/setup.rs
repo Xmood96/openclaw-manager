@@ -1,7 +1,11 @@
 // Setup Module — فحص وتثبيت WSL + OpenClaw بشكل مرئي وتفاعلي
 use serde::{Deserialize, Serialize};
 use tauri;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
 
 // ============================================================
 // هياكل البيانات
@@ -92,6 +96,27 @@ pub struct ModelRecommendation {
     pub explanation_ar: String,
 }
 
+const QUICK_WSL_TIMEOUT_SECS: u64 = 5;
+
+fn run_command_output_with_timeout(program: &str, args: &[&str], timeout_secs: u64) -> Result<std::process::Output, String> {
+    let program = program.to_string();
+    let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let program_for_error = program.clone();
+    let args_for_error = args.clone();
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = Command::new(&program).args(&args).output().map_err(|e| e.to_string());
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!("Timed out after {}s: {} {}", timeout_secs, program_for_error, args_for_error.join(" "))),
+        Err(e) => Err(format!("Command channel failed: {}", e)),
+    }
+}
+
 // ============================================================
 // أوامر الفحص
 // ============================================================
@@ -115,14 +140,14 @@ pub async fn check_full_system() -> SystemStatus {
             check_openclaw_everything("", "")
         } else {
             (
-                ComponentStatus { installed: false, version: None, details: format!("{} غير مثبتة", distro) },
+                ComponentStatus { installed: false, version: None, details: if distro.is_empty() { "لا توجد توزيعة Linux قابلة للتشغيل".into() } else { format!("{} غير مثبتة", distro) } },
                 ComponentStatus { installed: false, version: None, details: String::new() },
                 false,
             )
         };
 
         let nodejs = if ubuntu.installed { check_nodejs_installed(&distro) } else {
-            ComponentStatus { installed: false, version: None, details: format!("{} غير مثبتة", distro) }
+            ComponentStatus { installed: false, version: None, details: if distro.is_empty() { "لا توجد توزيعة Linux قابلة للتشغيل".into() } else { format!("{} غير مثبتة", distro) } }
         };
 
         let phase = if !wsl.installed {
@@ -155,9 +180,23 @@ fn check_openclaw_everything(_wsl_exe: &str, _distro: &str) -> (ComponentStatus,
     // استخدم exec_wsl من wsl_bridge — هو اللي مثبت ويشتغل صح
     use crate::wsl_bridge::exec_wsl;
 
-    // 1. هل openclaw موجود؟ (exec_wsl يستخدم env -i مع PATH نظيف الآن)
-    let which = exec_wsl("which openclaw 2>/dev/null || echo NOT_FOUND");
-    let oc_found = which.success && which.stdout.trim() != "NOT_FOUND" && !which.stdout.trim().is_empty();
+    let direct_status = probe_openclaw_status_via_default_wsl();
+    let direct_version = probe_openclaw_version_via_default_wsl();
+    let windows_gateway = probe_openclaw_gateway_from_windows();
+
+    // 1. هل openclaw موجود ويعمل؟
+    let ver = exec_wsl("openclaw --version 2>/dev/null || echo NOT_FOUND");
+    let version_text = ver.stdout.trim().to_string();
+    let status = exec_wsl("openclaw status 2>/dev/null || true");
+    let status_text = status.stdout.trim().to_string();
+    let oc_found =
+        (ver.success && version_text != "NOT_FOUND" && !version_text.is_empty()) ||
+        direct_version.as_deref().is_some_and(|v| !v.is_empty()) ||
+        direct_status.contains("OpenClaw status") ||
+        status_text.contains("OpenClaw status") ||
+        status_text.contains("Dashboard") ||
+        status_text.contains("Gateway") ||
+        windows_gateway.reachable;
 
     if !oc_found {
         return (
@@ -167,29 +206,128 @@ fn check_openclaw_everything(_wsl_exe: &str, _distro: &str) -> (ComponentStatus,
         );
     }
 
-    // 2. الإصدار
-    let ver = exec_wsl("openclaw --version 2>/dev/null || echo ?");
     let oc_version = if ver.success {
-        let v = ver.stdout.trim().to_string();
-        if v.is_empty() || v == "?" { None } else { Some(v) }
-    } else { None };
+        let v = version_text;
+        if v.is_empty() || v == "?" || v == "NOT_FOUND" {
+            direct_version.clone()
+        } else {
+            Some(v)
+        }
+    } else {
+        direct_version.clone()
+    };
 
-    // 3. الإعدادات — نستخدم المسار المباشر
-    let cfg = exec_wsl("test -f /home/$(whoami)/.openclaw/openclaw.json && echo EXISTS || echo NOT_FOUND");
-    let config_exists = cfg.stdout.trim() == "EXISTS";
+    // 3. الإعدادات — نسخ OpenClaw الحديثة قد لا تعتمد على openclaw.json القديم
+    let cfg = exec_wsl("for f in ~/.openclaw/openclaw.json ~/.openclaw/config.yml ~/.openclaw/clawd.json; do test -f \"$f\" && echo EXISTS && exit 0; done; echo NOT_FOUND");
+    let config_exists =
+        cfg.stdout.trim() == "EXISTS" ||
+        status_text.contains("Dashboard") ||
+        status_text.contains("Gateway") ||
+        status_text.contains("Agents") ||
+        status_text.contains("Sessions") ||
+        direct_status.contains("Dashboard") ||
+        direct_status.contains("Gateway") ||
+        direct_status.contains("Agents") ||
+        direct_status.contains("Sessions") ||
+        windows_gateway.reachable;
 
     // 4. Gateway — فحص مباشر عبر HTTP
     let health = crate::wsl_bridge::exec_wsl_timeout(
         "curl -s --max-time 3 http://127.0.0.1:18789/ 2>/dev/null | head -c 100 || echo 'UNREACHABLE'",
         5
     );
-    let gw_running = health.success && health.stdout.contains("<title>OpenClaw");
+    let gw_running =
+        (health.success && health.stdout.contains("<title>OpenClaw")) ||
+        direct_status.contains("reachable") ||
+        direct_status.contains("running (pid") ||
+        direct_status.contains("Gateway service") ||
+        status_text.contains("reachable") ||
+        status_text.contains("running (pid") ||
+        status_text.contains("Gateway service") ||
+        windows_gateway.reachable;
+
+    let openclaw_details = if windows_gateway.reachable && !status_text.contains("OpenClaw status") && !direct_status.contains("OpenClaw status") {
+        "OpenClaw ظاهر من Gateway على ويندوز ✓".into()
+    } else {
+        "OpenClaw مثبت ✓".into()
+    };
+
+    let config_details = if config_exists {
+        if windows_gateway.reachable && cfg.stdout.trim() != "EXISTS" {
+            "الإعدادات موجودة أو مستنتجة من Gateway ✓".into()
+        } else {
+            "الإعدادات موجودة ✓".into()
+        }
+    } else {
+        "لا توجد إعدادات".into()
+    };
 
     (
-        ComponentStatus { installed: true, version: oc_version, details: "OpenClaw مثبت ✓".into() },
-        ComponentStatus { installed: config_exists, version: None, details: if config_exists { "الإعدادات موجودة ✓".into() } else { "لا توجد إعدادات".into() } },
+        ComponentStatus { installed: true, version: oc_version, details: openclaw_details },
+        ComponentStatus { installed: config_exists, version: None, details: config_details },
         gw_running,
     )
+}
+
+#[derive(Default)]
+struct WindowsGatewayProbe {
+    reachable: bool,
+}
+
+fn probe_openclaw_status_via_default_wsl() -> String {
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+    let output = run_command_output_with_timeout(&wsl_exe, &["--", "openclaw", "status"], QUICK_WSL_TIMEOUT_SECS);
+
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            format!("{}{}", stdout, stderr)
+        }
+        Err(_) => String::new(),
+    }
+}
+
+fn probe_openclaw_version_via_default_wsl() -> Option<String> {
+    let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
+    let output = run_command_output_with_timeout(&wsl_exe, &["--", "openclaw", "--version"], QUICK_WSL_TIMEOUT_SECS).ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() || text == "?" {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn probe_openclaw_gateway_from_windows() -> WindowsGatewayProbe {
+    let mut probe = WindowsGatewayProbe::default();
+    let candidates = [
+        SocketAddr::from(([127, 0, 0, 1], 18789)),
+        SocketAddr::from(([127, 0, 0, 1], 3002)),
+    ];
+
+    for addr in candidates {
+        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)) {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+            let _ = stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+
+            let mut response = String::new();
+            let _ = stream.read_to_string(&mut response);
+            if response.contains("OpenClaw") || response.contains("openclaw") || response.contains("200 OK") {
+                probe.reachable = true;
+                break;
+            }
+        }
+    }
+
+    probe
 }
 
 /// ابحث عن wsl.exe في المسارات المعروفة
@@ -212,9 +350,7 @@ fn check_wsl_installed() -> ComponentStatus {
     let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
 
     // جرب wsl --version أولاً (الأكثر توافقًا)
-    let output = Command::new(&wsl_exe)
-        .args(["--version"])
-        .output();
+    let output = run_command_output_with_timeout(&wsl_exe, &["--version"], QUICK_WSL_TIMEOUT_SECS);
 
     match output {
         Ok(out) => {
@@ -231,7 +367,7 @@ fn check_wsl_installed() -> ComponentStatus {
                 ComponentStatus { installed: true, version, details: combined }
             } else {
                 // جرب wsl --status كخطة بديلة
-                let output2 = Command::new(&wsl_exe).args(["--status"]).output();
+                let output2 = run_command_output_with_timeout(&wsl_exe, &["--status"], QUICK_WSL_TIMEOUT_SECS);
                 if let Ok(out2) = output2 {
                     let s = String::from_utf8_lossy(&out2.stdout);
                     ComponentStatus { installed: out2.status.success(), version: None, details: s.to_string() }
@@ -252,6 +388,31 @@ fn check_wsl_installed() -> ComponentStatus {
 fn check_ubuntu_distro(distro: &str) -> ComponentStatus {
     let wsl_exe = find_wsl().unwrap_or_else(|| "wsl.exe".to_string());
 
+    if distro == "__DEFAULT_WSL__" {
+        let output = run_command_output_with_timeout(&wsl_exe, &["--", "echo", "OK"], QUICK_WSL_TIMEOUT_SECS);
+
+        return match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let installed = out.status.success() && stdout.trim() == "OK";
+                ComponentStatus {
+                    installed,
+                    version: if installed { Some("التوزيعة الافتراضية".into()) } else { None },
+                    details: if installed {
+                        "التوزيعة الافتراضية في WSL جاهزة ✓".into()
+                    } else {
+                        "تعذر تشغيل التوزيعة الافتراضية في WSL".into()
+                    },
+                }
+            }
+            Err(e) => ComponentStatus {
+                installed: false,
+                version: None,
+                details: format!("فشل تشغيل التوزيعة الافتراضية: {}", e),
+            },
+        };
+    }
+
     // قائمة توزيعات نجرّبها (أول وحدة تشتغل)
     let mut candidates: Vec<String> = vec![distro.to_string()];
     // أضف fallbacks إذا الاسم الأساسي اختلف
@@ -268,9 +429,7 @@ fn check_ubuntu_distro(distro: &str) -> ComponentStatus {
     let mut last_error = String::new();
 
     for candidate in &candidates {
-        let output = Command::new(&wsl_exe)
-            .args(["-d", candidate, "--", "echo", "OK"])
-            .output();
+        let output = run_command_output_with_timeout(&wsl_exe, &["-d", candidate, "--", "echo", "OK"], QUICK_WSL_TIMEOUT_SECS);
 
         match output {
             Ok(out) => {
@@ -279,9 +438,7 @@ fn check_ubuntu_distro(distro: &str) -> ComponentStatus {
 
                 if installed {
                     // نجيب الإصدار
-                    let ver = Command::new(&wsl_exe)
-                        .args(["-d", candidate, "--", "lsb_release", "-ds"])
-                        .output()
+                    let ver = run_command_output_with_timeout(&wsl_exe, &["-d", candidate, "--", "lsb_release", "-ds"], QUICK_WSL_TIMEOUT_SECS)
                         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                         .unwrap_or_default();
 
@@ -752,6 +909,30 @@ pub fn get_model_recommendations() -> Vec<ModelRecommendation> {
 #[tauri::command]
 pub async fn run_install_command(command: String) -> String {
     let result = tokio::task::spawn_blocking(move || {
+        if command.contains("npm install -g openclaw") {
+            let existing = crate::wsl_bridge::exec_wsl("openclaw --version 2>/dev/null || echo NOT_FOUND");
+            let existing_text = existing.stdout.trim();
+            if existing.success && !existing_text.is_empty() && existing_text != "NOT_FOUND" {
+                return format!("✅ OpenClaw مثبت بالفعل\n{}", existing_text);
+            }
+
+            if let Some(version) = probe_openclaw_version_via_default_wsl() {
+                return format!("✅ OpenClaw مثبت بالفعل\n{}", version);
+            }
+
+            let direct_status = probe_openclaw_status_via_default_wsl();
+            if direct_status.contains("OpenClaw status")
+                || direct_status.contains("Dashboard")
+                || direct_status.contains("Gateway")
+            {
+                return "✅ OpenClaw مثبت بالفعل\nتم اكتشافه عبر wsl.exe مباشرة".into();
+            }
+
+            if probe_openclaw_gateway_from_windows().reachable {
+                return "✅ OpenClaw ظاهر ويعمل بالفعل عبر Gateway المحلي".into();
+            }
+        }
+
         // 120 ثانية حد أقصى لأوامر التثبيت والإعداد
         let r = crate::wsl_bridge::exec_wsl_timeout(&command, 120);
         if r.success {

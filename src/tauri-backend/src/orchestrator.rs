@@ -1,7 +1,6 @@
-// Error Recovery Orchestrator — يشخص ويصلح المشاكل
+use crate::wsl_bridge;
 use serde::{Deserialize, Serialize};
 use tauri;
-use crate::wsl_bridge;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HealthSummary {
@@ -52,158 +51,94 @@ pub struct DiagnosisResult {
     pub needs_attention: bool,
 }
 
-/// فحص شامل للنظام — يستخدم python3 لتحليل JSON بدقة
 #[tauri::command]
 pub async fn get_health_summary() -> HealthSummary {
     tokio::task::spawn_blocking(|| {
-        let script = r##"
-# PATH now set by exec_wsl preamble
-openclaw health --json 2>/dev/null > /tmp/oc_health_summary.json || echo '{}' > /tmp/oc_health_summary.json
-python3 << 'PYEOF'
-import json, subprocess, re, sys
+        let snapshot = crate::speed::take_snapshot();
+        let distro = wsl_bridge::get_distro_name();
 
-try:
-    with open('/tmp/oc_health_summary.json') as f:
-        data = json.load(f)
-except:
-    data = {}
+        let channels = snapshot
+            .channels
+            .into_iter()
+            .map(|ch| ChannelInfo {
+                name: ch.name,
+                connected: ch.connected,
+                status: ch.status,
+            })
+            .collect::<Vec<_>>();
 
-wsl_ok = True
-gw_ok = data.get('ok', False)
+        let agents = snapshot
+            .agents
+            .into_iter()
+            .map(|agent| AgentInfo {
+                id: agent.id,
+                name: agent.name,
+                is_default: agent.is_default,
+                session_count: agent.session_count,
+            })
+            .collect::<Vec<_>>();
 
-channels = []
-for name, ch in data.get('channels', {}).items():
-    channels.append({
-        'name': name,
-        'connected': ch.get('connected', False),
-        'status': ch.get('healthState', 'unknown')
-    })
-
-agents = []
-ts = 0
-for a in data.get('agents', []):
-    sc = a.get('sessions', {}).get('count', 0)
-    ts += sc
-    agents.append({
-        'id': a.get('agentId', ''),
-        'name': a.get('name', ''),
-        'is_default': a.get('isDefault', False),
-        'session_count': sc
-    })
-
-try:
-    sc = data.get('sessions', {}).get('count', 0)
-    if sc > ts: ts = sc
-except: pass
-
-ov = ""
-try:
-    oc = subprocess.run(['openclaw', '--version'], capture_output=True, text=True, timeout=3).stdout.strip()
-    m = re.search(r'(\d+\.\d+\.\d+)', oc)
-    ov = m.group(1) if m else ""
-except: pass
-
-overall = "error"
-if not wsl_ok:
-    overall = "error"
-elif gw_ok:
-    overall = "good"
-else:
-    overall = "degraded"
-
-rec = None
-if not wsl_ok:
-    rec = "تشغيل WSL: wsl --shutdown ثم wsl -d Ubuntu"
-elif not gw_ok:
-    rec = "تشغيل doctor --fix وإعادة Gateway"
-
-print(json.dumps({
-    'overall': overall,
-    'wsl': {'running': wsl_ok, 'distro': 'Ubuntu 24.04' if wsl_ok else 'غير معروف'},
-    'gateway': {'reachable': gw_ok, 'version': ov or None, 'uptime': None},
-    'channels': channels,
-    'agents': agents,
-    'active_sessions': ts,
-    'diagnosis': None,
-    'recommended_action': rec
-}))
-PYEOF
-"##;
-
-        let combined = wsl_bridge::exec_wsl(script);
-
-        // Try to parse the output as JSON
-        if let Some(start) = combined.stdout.find('{') {
-            if let Some(end) = combined.stdout.rfind('}') {
-                let clean = &combined.stdout[start..=end];
-                if let Ok(summary) = serde_json::from_str::<HealthSummary>(clean) {
-                    return summary;
-                }
-            }
+        let overall = if !snapshot.wsl_ok {
+            "error"
+        } else if snapshot.gateway_ok {
+            "good"
+        } else {
+            "degraded"
         }
+        .to_string();
 
-        // Fallback: manual extraction from inline command
-        let inline = wsl_bridge::exec_wsl("openclaw health --json 2>/dev/null || echo '{}'");
-        let gw_ok = serde_json::from_str::<serde_json::Value>(&inline.stdout)
-            .map(|j| j.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
-            .unwrap_or(false);
-
-        let channels: Vec<ChannelInfo> = serde_json::from_str::<serde_json::Value>(&inline.stdout)
-            .ok()
-            .map(|j| {
-                j.get("channels")
-                    .and_then(|c| c.as_object())
-                    .map(|obj| {
-                        obj.iter().map(|(name, ch)| ChannelInfo {
-                            name: name.clone(),
-                            connected: ch.get("connected").and_then(|v| v.as_bool()).unwrap_or(false),
-                            status: ch.get("healthState").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                        }).collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        let active_sessions = serde_json::from_str::<serde_json::Value>(&inline.stdout)
-            .ok()
-            .and_then(|j| {
-                // Try sessions.count first, then sum from agents
-                j.get("sessions").and_then(|s| s.get("count")).and_then(|v| v.as_u64())
-                    .or_else(|| {
-                        j.get("agents").and_then(|a| a.as_array()).map(|agents| {
-                            agents.iter().filter_map(|a| {
-                                a.get("sessions").and_then(|s| s.get("count")).and_then(|v| v.as_u64())
-                            }).sum()
-                        })
-                    })
-            })
-            .unwrap_or(0) as u32;
+        let recommended_action = if !snapshot.wsl_ok {
+            Some("ثبّت WSL أو أصلح تشغيله أولًا".into())
+        } else if !snapshot.ubuntu_ok {
+            Some("ثبّت توزيعة Linux داخل WSL ثم أعد الفحص".into())
+        } else if !snapshot.gateway_ok {
+            Some("شغّل doctor --fix ثم أعد تشغيل Gateway".into())
+        } else {
+            None
+        };
 
         HealthSummary {
-            overall: if gw_ok { "good".into() } else { "degraded".into() },
-            wsl: WslStatus { running: true, distro: "Ubuntu 24.04".into() },
+            overall,
+            wsl: WslStatus {
+                running: snapshot.wsl_ok && snapshot.ubuntu_ok,
+                distro: if distro.is_empty() {
+                    "غير متوفر".into()
+                } else {
+                    distro
+                },
+            },
             gateway: GatewayProbe {
-                reachable: gw_ok,
-                version: None,
+                reachable: snapshot.gateway_ok,
+                version: snapshot.gateway_version.or(snapshot.openclaw_version),
                 uptime: None,
             },
             channels,
-            agents: Vec::new(),
-            active_sessions,
-            diagnosis: None,
-            recommended_action: if gw_ok { None } else { Some("تشغيل doctor --fix وإعادة Gateway".into()) },
+            agents,
+            active_sessions: snapshot.active_sessions,
+            diagnosis: snapshot.error,
+            recommended_action,
         }
-    }).await.unwrap_or_else(|e| HealthSummary {
+    })
+    .await
+    .unwrap_or_else(|e| HealthSummary {
         overall: "error".into(),
-        wsl: WslStatus { running: false, distro: format!("خطأ: {}", e) },
-        gateway: GatewayProbe { reachable: false, version: None, uptime: None },
-        channels: Vec::new(), agents: Vec::new(),
-        active_sessions: 0, diagnosis: None,
+        wsl: WslStatus {
+            running: false,
+            distro: format!("خطأ: {}", e),
+        },
+        gateway: GatewayProbe {
+            reachable: false,
+            version: None,
+            uptime: None,
+        },
+        channels: Vec::new(),
+        agents: Vec::new(),
+        active_sessions: 0,
+        diagnosis: None,
         recommended_action: Some("فشل الاتصال بـ WSL".into()),
     })
 }
 
-/// تشخيص المشاكل
 #[tauri::command]
 pub async fn run_diagnosis() -> DiagnosisResult {
     tokio::task::spawn_blocking(|| {
@@ -211,39 +146,35 @@ pub async fn run_diagnosis() -> DiagnosisResult {
         let mut fixes = Vec::new();
         let mut failed = Vec::new();
 
-        let wsl = wsl_bridge::exec_wsl("echo 'WSL is running' && uname -a");
-        if !wsl.success {
-            issues.push("WSL غير شغال".into());
+        let snapshot = crate::speed::take_snapshot();
+
+        if !snapshot.wsl_ok {
+            issues.push("WSL غير مثبت أو غير متاح".into());
+        }
+        if snapshot.wsl_ok && !snapshot.ubuntu_ok {
+            issues.push("لا توجد توزيعة Linux قابلة للتشغيل داخل WSL".into());
         }
 
-        let gw_result = wsl_bridge::exec_wsl("openclaw health --json 2>/dev/null || echo '{\"ok\":false}'");
-        let gw_ok = serde_json::from_str::<serde_json::Value>(&gw_result.stdout)
-            .map(|j| j.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
-            .unwrap_or(false);
-
-        if !gw_ok {
+        if snapshot.ubuntu_ok && !snapshot.gateway_ok {
             issues.push("Gateway غير مستجيب".into());
             let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
             if doctor.success {
                 fixes.push("تم تشغيل doctor --fix".into());
             } else {
-                failed.push("فشل doctor --fix".into());
+                failed.push(format!(
+                    "فشل doctor --fix: {}",
+                    if doctor.stderr.trim().is_empty() {
+                        doctor.stdout.trim()
+                    } else {
+                        doctor.stderr.trim()
+                    }
+                ));
             }
         }
 
-        // Check channel status
-        let channels_value = serde_json::from_str::<serde_json::Value>(&gw_result.stdout)
-            .ok()
-            .and_then(|j| j.get("channels").cloned());
-
-        if let Some(ch_obj) = channels_value {
-            if let Some(obj) = ch_obj.as_object() {
-                for (name, ch) in obj {
-                    let connected = ch.get("connected").and_then(|v| v.as_bool()).unwrap_or(false);
-                    if !connected {
-                        issues.push(format!("{} غير متصل", name));
-                    }
-                }
+        for channel in snapshot.channels {
+            if !channel.connected {
+                issues.push(format!("القناة {} غير متصلة", channel.name));
             }
         }
 
@@ -252,70 +183,64 @@ pub async fn run_diagnosis() -> DiagnosisResult {
             issues_found: issues,
             fixes_applied: fixes,
             fixes_failed: failed,
-            overall_status: if has_issues { "issues_found".to_string() } else { "good".to_string() },
+            overall_status: if has_issues { "issues_found" } else { "good" }.into(),
             needs_attention: has_issues,
         }
-    }).await.unwrap_or_else(|e| DiagnosisResult {
+    })
+    .await
+    .unwrap_or_else(|e| DiagnosisResult {
         issues_found: vec![format!("خطأ: {}", e)],
-        fixes_applied: Vec::new(), fixes_failed: Vec::new(),
-        overall_status: "error".into(), needs_attention: true,
+        fixes_applied: Vec::new(),
+        fixes_failed: Vec::new(),
+        overall_status: "error".into(),
+        needs_attention: true,
     })
 }
 
-/// تشغيل playbook معين
 #[tauri::command]
 pub async fn run_playbook(playbook_id: String) -> String {
-    tokio::task::spawn_blocking(move || {
-        match playbook_id.as_str() {
-            "gateway-restart" => {
-                let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
-                if !doctor.success { return format!("doctor فشل: {}", doctor.stderr); }
-                let restart = wsl_bridge::exec_wsl("openclaw gateway restart 2>&1");
-                if restart.success { "✅ تم إعادة تشغيل Gateway بنجاح".into() }
-                else { format!("❌ فشل إعادة التشغيل: {}", restart.stderr) }
+    tokio::task::spawn_blocking(move || match playbook_id.as_str() {
+        "gateway-restart" => {
+            let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
+            if !doctor.success {
+                return format!("doctor فشل: {}", doctor.stderr);
             }
-            "gateway-stop" => {
-                let stop = wsl_bridge::exec_wsl("openclaw gateway stop 2>&1");
-                if stop.success || stop.stderr.contains("not running") {
-                    "⏹️ Gateway توقف".into()
-                } else {
-                    format!("❌ فشل الإيقاف: {}", stop.stderr)
-                }
-            }
-            "gateway-start" => {
-                let start = wsl_bridge::exec_wsl("openclaw gateway start 2>&1; sleep 2; openclaw health --json 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)\"");
-                if start.success { "✅ Gateway بدأ بنجاح".into() }
-                else { format!("❌ فشل التشغيل: {}", start.stderr) }
-            }
-            "run-doctor" => {
-                let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
-                if doctor.success { "✅ تم تشغيل doctor بنجاح".into() }
-                else { format!("❌ فشل doctor: {}", doctor.stderr) }
-            }
-            "whatsapp-reconnect" => {
-                // إعادة ربط WhatsApp: إزالة ثم إضافة
-                let remove = wsl_bridge::exec_wsl("openclaw channels remove whatsapp 2>&1");
-                if !remove.success && !remove.stderr.contains("not found") {
-                    return format!("❌ فشل إزالة واتساب: {}", remove.stderr);
-                }
-                let login = wsl_bridge::exec_wsl("openclaw channels login --whatsapp 2>&1");
-                if login.success { "✅ WhatsApp جاهز لإعادة الربط — امسح QR".into() }
-                else { format!("❌ فشل بدء ربط واتساب: {}", login.stderr) }
-            }
-            "wsl-reset" => {
-                // إعادة تشغيل WSL بالكامل (الحل الأخير)
-                let shutdown = std::process::Command::new("wsl.exe")
-                    .args(["--shutdown"])
-                    .output();
-                match shutdown {
-                    Ok(_) => {
-                        std::thread::sleep(std::time::Duration::from_secs(5));
-                        "✅ تم إعادة تشغيل WSL — أنتظر 10 ثواني ثم أعد فحص النظام".into()
-                    }
-                    Err(e) => format!("❌ فشل إعادة تشغيل WSL: {}", e),
-                }
-            }
-            _ => format!("❌ playbook غير معروف: {}", playbook_id),
+            let restart = crate::speed::restart_gateway();
+            restart.unwrap_or_else(|e| format!("❌ فشل إعادة التشغيل: {}", e))
         }
-    }).await.unwrap_or_else(|e| format!("❌ خطأ: {}", e))
+        "gateway-stop" => crate::speed::stop_gateway()
+            .unwrap_or_else(|e| format!("❌ فشل الإيقاف: {}", e)),
+        "gateway-start" => crate::speed::start_gateway()
+            .unwrap_or_else(|e| format!("❌ فشل التشغيل: {}", e)),
+        "run-doctor" => {
+            let doctor = wsl_bridge::exec_wsl("openclaw doctor --fix --non-interactive 2>&1");
+            if doctor.success {
+                "✅ تم تشغيل doctor بنجاح".into()
+            } else {
+                format!("❌ فشل doctor: {}", doctor.stderr)
+            }
+        }
+        "whatsapp-reconnect" => {
+            let remove = wsl_bridge::exec_wsl("openclaw channels remove whatsapp 2>&1");
+            if !remove.success && !remove.stderr.contains("not found") {
+                return format!("❌ فشل إزالة واتساب: {}", remove.stderr);
+            }
+            let login = wsl_bridge::exec_wsl("openclaw channels login --whatsapp 2>&1");
+            if login.success {
+                "✅ WhatsApp جاهز لإعادة الربط - امسح QR".into()
+            } else {
+                format!("❌ فشل بدء ربط واتساب: {}", login.stderr)
+            }
+        }
+        "wsl-reset" => match std::process::Command::new("wsl.exe").args(["--shutdown"]).output() {
+            Ok(_) => {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                "✅ تم إعادة تشغيل WSL - انتظر قليلًا ثم أعد الفحص".into()
+            }
+            Err(e) => format!("❌ فشل إعادة تشغيل WSL: {}", e),
+        },
+        _ => format!("❌ playbook غير معروف: {}", playbook_id),
+    })
+    .await
+    .unwrap_or_else(|e| format!("❌ خطأ: {}", e))
 }

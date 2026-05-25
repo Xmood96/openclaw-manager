@@ -28,7 +28,7 @@ const navItems: NavItem[] = [
   { id: "dashboard", label: "الرئيسية", icon: "🏠" },
   { id: "channels", label: "القنوات", icon: "📡" },
   { id: "models", label: "الموديلات", icon: "🧠" },
-  { id: "assistant", label: "المساعد الذكي", icon: "🫀" },
+  { id: "assistant", label: "مساعد الصيانة", icon: "🤖" },
   { id: "logs", label: "السجلات", icon: "📋" },
   { id: "settings", label: "الإعدادات", icon: "⚙️" },
 ];
@@ -73,7 +73,7 @@ function App() {
   const renderPage = () => {
     switch (currentPage) {
       case "dashboard":
-        return <Dashboard />;
+        return <Dashboard onOpenAssistant={() => setCurrentPage("assistant")} />;
       case "channels":
         return <Channels />;
       case "models":

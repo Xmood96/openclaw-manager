@@ -75,7 +75,7 @@ async fn ws_background_task(
     mut command_rx: mpsc::Receiver<WsCommand>,
     status_tx: mpsc::Sender<GatewayStatus>,
 ) {
-    let ws_url = "ws://127.0.0.1:18789";
+    let ws_url = "ws://localhost:18789";
     let mut reconnect_delay = Duration::from_secs(2);
     let max_reconnect_delay = Duration::from_secs(60);
     let mut shutdown = false;
@@ -395,7 +395,7 @@ pub async fn init_ws_manager() {
 #[tauri::command]
 pub async fn connect_to_gateway(url: Option<String>) -> GatewayStatus {
     // إعادة استخدام try_connect مع WS manager
-    let _ws_url = url.unwrap_or_else(|| "ws://127.0.0.1:18789".into());
+    let _ws_url = url.unwrap_or_else(|| "ws://localhost:18789".into());
 
     tokio::task::spawn_blocking(move || {
         // For synchronous fallback, use snapshot-based check

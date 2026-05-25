@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri;
-use crate::ai_client::{self, ChatMessage, AIResponse};
+use crate::ai_client::{self, ChatMessage};
 // ============================================================
 // هياكل البيانات
 // ============================================================
@@ -277,7 +277,7 @@ pub async fn agent_send_message(session_json: String, message: String) -> Result
 
     // احفظ الجلسة
     let session_data = serde_json::to_string(&session).unwrap_or_default();
-    crate::app_state::save_to_file("agent-session.json", &session_data);
+    let _ = crate::app_state::save_to_file("agent-session.json", &session_data);
 
     Ok(response)
 }
@@ -589,7 +589,7 @@ pub async fn agent_health_check() -> Vec<AgentDiagnosis> {
 /// حفظ الجلسة الحالية
 #[tauri::command]
 pub fn agent_save_session(session_json: String) -> Result<String, String> {
-    crate::app_state::save_to_file("agent-session.json", &session_json);
+    let _ = crate::app_state::save_to_file("agent-session.json", &session_json);
     Ok("تم حفظ الجلسة".into())
 }
 
@@ -656,7 +656,7 @@ pub fn agent_run_command(command: String) -> String {
 // المعالج الأساسي
 // ============================================================
 
-async fn process_agent_turn(user_message: &str, session: &mut AgentSession) -> String {
+async fn process_agent_turn(user_message: &str, _session: &mut AgentSession) -> String {
     let lower = user_message.to_lowercase();
 
     // — الكشف عن نية المستخدم —
@@ -819,7 +819,6 @@ fn chrono_now() -> String {
         .unwrap_or(0);
     // YYYY-MM-DDTHH:MM:SS بسيط UTC
     let secs_in_day: u64 = 86400;
-    let days = total_secs / secs_in_day;
     let remaining = total_secs % secs_in_day;
     let hrs = remaining / 3600;
     let mins = (remaining % 3600) / 60;
