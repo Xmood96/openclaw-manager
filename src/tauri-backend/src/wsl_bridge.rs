@@ -506,7 +506,8 @@ pub async fn get_agents_config() -> WslResult {
 #[tauri::command]
 pub async fn run_terminal_command(command: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        let wrapped = format!("timeout 25s script -q -c \"{}\" /dev/null 2>&1 || true", command);
+        // timeout 45s — openclaw يحتاج وقت للاتصال بـ Gateway ثم إظهار QR
+        let wrapped = format!("timeout 45s script -q -c \"{}\" /dev/null 2>&1 || true", command);
         exec_wsl(&wrapped)
     })
     .await
@@ -518,11 +519,11 @@ pub async fn run_terminal_command(command: String) -> WslResult {
     })
 }
 
-/// فتح نافذة طرفية خارجية (cmd /c start) — QR code يظهر في نافذة مستقلة
+/// فتح نافذة طرفية خارجية — start "" للعنوان الفارغ (يمنع خطأ المسار العربي)
 #[tauri::command]
 pub fn open_terminal_whatsapp() -> String {
     match std::process::Command::new("cmd.exe")
-        .args(["/c", "start", "\"ربط واتساب\"", "wsl", "--", "bash", "-c", "openclaw channels login --channel whatsapp"])
+        .args(["/c", "start", "", "wsl", "--", "bash", "-c", "openclaw channels login --channel whatsapp"])
         .spawn()
     {
         Ok(_) => "✅ تم فتح الطرفية".into(),
