@@ -157,7 +157,7 @@ export default function Channels() {
     setTerminalOutput("");
     try {
       const r: any = await invoke("run_terminal_command", {
-        command: "openclaw channels add --channel whatsapp 2>&1 && openclaw channels login --channel whatsapp 2>&1",
+        command: "openclaw channels login --channel whatsapp 2>&1",
       });
       setTerminalOutput(r.success ? r.stdout : `❌ ${r.stderr}`);
     } catch (e) {
