@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::{self, Emitter};
 use crate::ai_client::{self, ChatMessage, StreamEvent};
-use std::sync::mpsc;
 
 // ============================================================
 // هياكل البيانات
@@ -170,7 +169,7 @@ pub async fn agent_send_message(app_handle: tauri::AppHandle, session_json: Stri
         }
     };
 
-    // Agent loop: chat → maybe tool calls → continue
+    // Agent loop: chat → DeepSeek streaming
     let mut chat_messages: Vec<ChatMessage> = vec![
         ChatMessage { role: "system".into(), content: build_system_prompt() }
     ];
@@ -182,83 +181,39 @@ pub async fn agent_send_message(app_handle: tauri::AppHandle, session_json: Stri
         });
     }
 
-    let mut final_response = String::new();
-    let mut max_loops = 3; // safety: max tool-calling loops
+    // Call DeepSeek directly with streaming + emit events inline
+    let mut full_response = String::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(32);
+    let app_clone = app_handle.clone();
 
-    loop {
-        let (tx, rx) = mpsc::channel();
-        let app = app_handle.clone();
+    let key = api_key.clone();
+    let msgs = chat_messages.clone();
+    tokio::task::spawn(async move {
+        let _ = ai_client::call_deepseek_streaming(msgs, &key, tx).await;
+    });
 
-        // Spawn streaming in background
-        let msgs = chat_messages.clone();
-        let key = api_key.clone();
-        let _handle = app.clone();
-        tokio::task::spawn(async move {
-            // Forward stream events to Tauri
-            let stream_tx = tx.clone();
-            let stream_app = app.clone();
-            let _ = call_deepseek_with_events(msgs, &key, stream_tx, stream_app).await;
+    // Read events and relay to Tauri
+    while let Some(event) = rx.recv().await {
+        match event.event_type.as_str() {
+            "token" => full_response.push_str(&event.content),
+            "done" => { full_response = event.content; break; }
+            "error" => { full_response = format!("❌ {}", event.content); break; }
+            _ => {}
+        }
+        let _ = app_clone.emit("agent-progress", ProgressEvent {
+            event_type: event.event_type.clone(),
+            content: event.content.clone(),
+            tool: event.tool_name,
+            tool_args: event.tool_args,
+            tool_result: None,
         });
-
-        // Collect streamed content + forward events
-        let mut content = String::new();
-        for event in rx {
-            match event.event_type.as_str() {
-                "token" => { content.push_str(&event.content); }
-                "thinking" | "tool_start" | "tool_end" => {}
-                "done" => { content = event.content; break; }
-                "error" => { final_response = event.content; break; }
-                _ => {}
-            }
-            let _ = app_handle.emit("agent-progress", ProgressEvent {
-                event_type: event.event_type.clone(),
-                content: event.content.clone(),
-                tool: event.tool_name.clone(),
-                tool_args: event.tool_args.clone(),
-                tool_result: None,
-            });
-        }
-
-        if !final_response.is_empty() { break; }
-        if content.is_empty() { final_response = "⚠️ لم أستطع الحصول على رد — تأكد من الاتصال بـ DeepSeek".into(); break; }
-
-        // Check if content contains tool calls
-        let tools = extract_tool_calls(&content);
-        if tools.is_empty() || max_loops == 0 {
-            final_response = content;
-            break;
-        }
-        max_loops -= 1;
-
-        // Add assistant response to chat
-        chat_messages.push(ChatMessage { role: "assistant".into(), content: content.clone() });
-
-        // Execute tools
-        for (tool_name, tool_args) in &tools {
-            let _ = app_handle.emit("agent-progress", ProgressEvent {
-                event_type: "tool_start".into(),
-                content: format!("🔧 تنفيذ {}...", tool_name),
-                tool: Some(tool_name.clone()),
-                tool_args: Some(tool_args.clone()),
-                tool_result: None,
-            });
-
-            let result = execute_agent_tool(tool_name, tool_args).await;
-
-            let _ = app_handle.emit("agent-progress", ProgressEvent {
-                event_type: "tool_end".into(),
-                content: format!("{} نتيجة {}: {}", if result.starts_with("✅") { "✅" } else { "⚠️" }, tool_name, result.chars().take(200).collect::<String>()),
-                tool: Some(tool_name.clone()),
-                tool_args: Some(tool_args.clone()),
-                tool_result: Some(result.clone()),
-            });
-
-            chat_messages.push(ChatMessage {
-                role: "tool".into(),
-                content: format!("tool: {}\nargs: {}\nresult: {}", tool_name, tool_args, result),
-            });
-        }
     }
+
+    if full_response.is_empty() {
+        full_response = "⚠️ لم أستطع الحصول على رد".into();
+    }
+
+    let final_response = full_response;
 
     // Save final response
     session.messages.push(AgentMessage {
@@ -279,85 +234,8 @@ pub async fn agent_send_message(app_handle: tauri::AppHandle, session_json: Stri
     Ok(final_response)
 }
 
-async fn call_deepseek_with_events(
-    messages: Vec<ChatMessage>,
-    api_key: &str,
-    tx: mpsc::Sender<StreamEvent>,
-    _app: tauri::AppHandle,
-) -> Result<(), String> {
-    let _ = ai_client::call_deepseek_streaming(messages, api_key, tx).await?;
-    Ok(())
-}
 
-fn extract_tool_calls(content: &str) -> Vec<(String, String)> {
-    let mut tools = Vec::new();
-    // Simple string matching — no regex complexity
-    for line in content.lines() {
-        let line = line.trim();
-        // run_command("...")
-        if let Some(start) = line.find("run_command(") {
-            let rest = &line[start + 13..]; // skip "run_command(\""
-            if let Some(end) = rest.find("\")") {
-                tools.push(("run_command".into(), rest[..end].to_string()));
-            }
-        }
-        // read_file("...")
-        if let Some(start) = line.find("read_file(") {
-            let rest = &line[start + 11..];
-            if let Some(end) = rest.find("\")") {
-                tools.push(("read_file".into(), rest[..end].to_string()));
-            }
-        }
-        // health_check()
-        if line.contains("health_check()") {
-            tools.push(("health_check".into(), String::new()));
-        }
-        // COMMAND: / READ: / Arabic patterns
-        if line.starts_with("COMMAND:") || line.starts_with("command:") || line.starts_with("تنفيذ:") {
-            let cmd = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
-            if !cmd.is_empty() { tools.push(("run_command".into(), cmd)); }
-        }
-        if line.starts_with("READ:") || line.starts_with("read:") || line.starts_with("قراءة:") {
-            let path = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
-            if !path.is_empty() { tools.push(("read_file".into(), path)); }
-        }
-    }
-    tools
-}
 
-async fn execute_agent_tool(tool: &str, args: &str) -> String {
-    match tool {
-        "run_command" => {
-            let result = crate::wsl_bridge::exec_wsl_timeout(args, 30);
-            if result.success {
-                format!("✅ {}", result.stdout.trim())
-            } else {
-                format!("❌ {} {}", result.stdout.trim(), result.stderr.trim())
-            }
-        }
-        "read_file" => {
-            let path = args.trim();
-            match std::fs::read_to_string(path) {
-                Ok(content) => {
-                    let preview = content.lines().take(30).collect::<Vec<_>>().join("\n");
-                    format!("✅ {} ({}/{} سطر)\n{}", path, content.lines().count(), content.lines().count(), preview)
-                }
-                Err(e) => format!("❌ فشل قراءة {}: {}", path, e),
-            }
-        }
-        "health_check" => {
-            let snap = crate::speed::take_snapshot();
-            format!(
-                "WSL: {} | Gateway: {} | Sessions: {} | Agents: {}",
-                if snap.wsl_ok { "🟢" } else { "🔴" },
-                if snap.gateway_ok { "🟢" } else { "🔴" },
-                snap.active_sessions,
-                snap.agents.len()
-            )
-        }
-        _ => format!("❌ أداة غير معروفة: {}", tool),
-    }
-}
 
 async fn process_agent_turn(message: &str, _session: &mut AgentSession) -> String {
     let msg = message.to_lowercase();
