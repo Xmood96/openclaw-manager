@@ -466,7 +466,7 @@ pub async fn reconnect_channel(channel_name: String) -> WslResult {
 
 #[tauri::command]
 pub async fn login_whatsapp() -> WslResult {
-    tokio::task::spawn_blocking(|| exec_wsl("openclaw channels login --channel whatsapp 2>&1"))
+    tokio::task::spawn_blocking(|| exec_wsl("openclaw channels add --channel whatsapp 2>&1"))
         .await
         .unwrap_or_else(|e| WslResult {
             success: false,
@@ -506,8 +506,8 @@ pub async fn get_agents_config() -> WslResult {
 #[tauri::command]
 pub async fn run_terminal_command(command: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        // timeout 45s — openclaw يحتاج وقت للاتصال بـ Gateway ثم إظهار QR
-        let wrapped = format!("timeout 45s script -q -c \"{}\" /dev/null 2>&1 || true", command);
+        // timeout 60s للـ add (يحتاج وقت أطول)
+        let wrapped = format!("timeout 60s script -q -c \"{}\" /dev/null 2>&1 || true", command);
         exec_wsl(&wrapped)
     })
     .await
@@ -523,7 +523,7 @@ pub async fn run_terminal_command(command: String) -> WslResult {
 #[tauri::command]
 pub fn open_terminal_whatsapp() -> String {
     match std::process::Command::new("cmd.exe")
-        .args(["/c", "start", "", "wsl", "--", "bash", "-c", "openclaw channels login --channel whatsapp"])
+        .args(["/c", "start", "", "wsl", "--", "bash", "-c", "echo '🔗 جاري الاتصال...' && openclaw channels add --channel whatsapp; echo ''; echo '─── اضغط Enter للإغلاق ───'; read"])
         .spawn()
     {
         Ok(_) => "✅ تم فتح الطرفية".into(),

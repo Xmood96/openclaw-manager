@@ -129,7 +129,7 @@ export default function Channels() {
     setTerminalOutput("");
     try {
       const r: any = await invoke("run_terminal_command", {
-        command: "openclaw channels login --channel whatsapp",
+        command: "openclaw channels add --channel whatsapp",
       });
       setTerminalOutput(r.success ? r.stdout : `❌ ${r.stderr}`);
     } catch (e) {
@@ -415,7 +415,7 @@ export default function Channels() {
                 <div className="flex flex-col items-center gap-4 py-12">
                   <Loader2 size={40} className="animate-spin text-primary" />
                   <p className="text-sm text-muted">جاري فتح الطرفية...</p>
-                  <p className="text-xs text-muted">قد يأخذ حتى ٤٥ ثانية</p>
+                  <p className="text-xs text-muted">قد يأخذ حتى ٦٠ ثانية</p>
                 </div>
               )}
 
