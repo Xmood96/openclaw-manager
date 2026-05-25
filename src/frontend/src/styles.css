@@ -58,3 +58,9 @@ body {
 .animate-typing { animation: typing-bounce 1.4s infinite ease-in-out; }
 .animate-typing:nth-child(2) { animation-delay: 0.2s; }
 .animate-typing:nth-child(3) { animation-delay: 0.4s; }
+
+/* ANSI color spans for terminal QR code */
+.ansi-bg-white { background: #ffffff; color: #000000; }
+.ansi-bg-black { background: #000000; color: #ffffff; }
+.ansi-fg-black { color: #000000; }
+.ansi-fg-white { color: #ffffff; }
