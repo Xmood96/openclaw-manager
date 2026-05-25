@@ -421,7 +421,7 @@ export default function Channels() {
 
               {terminalOutput && (
                 <>
-                  <div className="bg-[#0a0a0a] text-green-400 rounded-2xl p-4 overflow-y-auto flex-1 min-h-[300px] max-h-[55vh]">
+                  <div className="bg-[#0a0a0a] text-green-400 rounded-2xl p-4 overflow-auto flex-1 min-h-[400px] max-h-[65vh]">
                     <pre className="text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-all log-viewer">{terminalOutput}</pre>
                   </div>
                   <div className="flex gap-2 mt-3 flex-shrink-0">

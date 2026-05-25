@@ -506,8 +506,8 @@ pub async fn get_agents_config() -> WslResult {
 #[tauri::command]
 pub async fn run_terminal_command(command: String) -> WslResult {
     tokio::task::spawn_blocking(move || {
-        // timeout 60s للـ add (يحتاج وقت أطول)
-        let wrapped = format!("timeout 60s script -q -c \"{}\" /dev/null 2>&1 || true", command);
+        // timeout 60s + sed لتنظيف ANSI color codes من المخرجات
+        let wrapped = format!("timeout 60s script -q -c \"{}\" /dev/null 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | sed 's/\\x1b\\][^\\x07]*\\x07//g' | sed 's/\\r//g' || true", command);
         exec_wsl(&wrapped)
     })
     .await
