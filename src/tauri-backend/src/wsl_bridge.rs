@@ -523,7 +523,7 @@ pub async fn run_terminal_command(command: String) -> WslResult {
 #[tauri::command]
 pub fn open_terminal_whatsapp() -> String {
     match std::process::Command::new("cmd.exe")
-        .args(["/c", "start", "", "wsl", "--", "bash", "-c", "echo '🔗 جاري الاتصال...' && openclaw channels add --channel whatsapp; echo ''; echo '─── اضغط Enter للإغلاق ───'; read"])
+        .args(["/c", "start", "", "wsl", "--", "bash", "-c", "echo '🔗 جاري الإعداد...' && openclaw channels add --channel whatsapp 2>&1 && echo '' && echo '📱 جاري عرض QR...' && openclaw channels login --channel whatsapp 2>&1; echo ''; echo '─── اضغط Enter للإغلاق ───'; read"])
         .spawn()
     {
         Ok(_) => "✅ تم فتح الطرفية".into(),
