@@ -2,7 +2,7 @@
 // v0.2: Streaming + tool-calling support
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::mpsc;
+use futures_util::StreamExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
@@ -103,11 +103,13 @@ pub fn get_deepseek_key_from_env() -> Option<String> {
 pub async fn call_deepseek_streaming(
     messages: Vec<ChatMessage>,
     api_key: &str,
-    event_tx: mpsc::Sender<StreamEvent>,
+    event_tx: tokio::sync::mpsc::Sender<StreamEvent>,
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
 
     let _ = event_tx.send(StreamEvent {
+                        tool_args: None,
+                    }).await;
         event_type: "thinking".into(),
         content: "🧠 جاري التفكير...".into(),
         tool_name: None,
@@ -140,7 +142,6 @@ pub async fn call_deepseek_streaming(
     // Read SSE stream
     let mut full_content = String::new();
     let mut stream = resp.bytes_stream();
-    use futures_util::StreamExt;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.unwrap_or_default();
@@ -159,18 +160,18 @@ pub async fn call_deepseek_streaming(
                 if let Some(delta) = parsed["choices"][0]["delta"]["content"].as_str() {
                     full_content.push_str(delta);
                     let _ = event_tx.send(StreamEvent {
-                        event_type: "token".into(),
+                        event_type: "token".into().await,
                         content: delta.to_string(),
                         tool_name: None,
                         tool_args: None,
-                    });
+                    }).await;
                 }
             }
         }
     }
 
     let _ = event_tx.send(StreamEvent {
-        event_type: "done".into(),
+        event_type: "done".into().await,
         content: full_content.clone(),
         tool_name: None,
         tool_args: None,
