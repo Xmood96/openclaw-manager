@@ -162,7 +162,7 @@ function ModelBadge({
   description,
   default: isDefault,
 }: {
-  icon: React.ComponentType<{ size?: number }>;
+  icon: React.ComponentType<any>;
   name: string;
   provider: string;
   description: string;

@@ -32,16 +32,6 @@ interface AgentSession {
   created_at: string;
   updated_at: string;
 }
-interface Diagnosis {
-  severity: string;
-  component: string;
-  summary: string;
-  details?: string | null;
-  fix_available: boolean;
-  fix_command?: string | null;
-  fix_description?: string | null;
-}
-
 const QUICK_ACTIONS = [
   { label: "تشخيص", icon: Stethoscope, msg: "شخّص النظام" },
   { label: "ساعدني", icon: Lightbulb, msg: "وش تقدر تسوي؟" },
@@ -133,7 +123,7 @@ export default function AIAssistant() {
   const [gatewayOk, setGatewayOk] = useState(false);
   const [showActions, setShowActions] = useState(true);
   const [hasAI, setHasAI] = useState(false);
-  const [aiModel, setAiModel] = useState("محلي");
+  const [aiModel] = useState("محلي");
 
   const scrollRef = useRef<HTMLDivElement>(null);
 

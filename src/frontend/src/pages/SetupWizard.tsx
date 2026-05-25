@@ -14,7 +14,6 @@ import {
   Rocket,
   Server,
   Terminal,
-  Wrench,
   Cpu,
 } from "lucide-react";
 
@@ -59,7 +58,7 @@ interface ModelRec {
   explanation_ar: string;
 }
 
-const phaseMeta: Record<string, { icon: React.ComponentType<{ size?: number }>; emoji: string; title: string; subtitle: string }> = {
+const phaseMeta: Record<string, { icon: React.ComponentType<any>; emoji: string; title: string; subtitle: string }> = {
   NoWSL: { icon: Monitor, emoji: "🪟", title: "مرحبًا بك في مساعدك الشخصي", subtitle: "لنبدأ بتجهيز البيئة" },
   WSLNoDistro: { icon: Server, emoji: "🐧", title: "جهز Linux", subtitle: "نحتاج توزيعة Ubuntu" },
   DistroNoOpenClaw: { icon: Package, emoji: "🧠", title: "نصب OpenClaw", subtitle: "القلب النابض للمساعد" },

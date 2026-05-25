@@ -31,7 +31,7 @@ interface SystemStatus {
   config: { installed: boolean; version: string | null; details: string };
 }
 
-const navItems: { id: Page; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+const navItems: { id: Page; label: string; icon: React.ComponentType<any> }[] = [
   { id: "dashboard", label: "الرئيسية", icon: LayoutDashboard },
   { id: "channels", label: "القنوات", icon: Radio },
   { id: "models", label: "الموديلات", icon: Brain },
