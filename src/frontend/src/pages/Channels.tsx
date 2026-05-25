@@ -1,87 +1,223 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Radio,
-  CheckCircle2,
-  XCircle,
-  Activity,
-  Users,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  Trash2,
+  Plus,
+  X,
   Loader2,
+  CheckCircle2,
   AlertCircle,
+  QrCode,
+  Key,
+  Shield,
+  Users,
+  Copy,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
-interface ChannelInfo {
+interface ChannelData {
   name: string;
+  provider: string;
   connected: boolean;
-  status: string;
+  health_state: string;
+  enabled: boolean;
 }
-interface AgentInfo {
+interface AgentData {
   id: string;
   name: string;
   is_default: boolean;
   session_count: number;
 }
-interface HealthSummary {
-  overall: string;
-  wsl: { running: boolean; distro: string };
-  gateway: { reachable: boolean; version: string | null; uptime: string | null };
-  channels: ChannelInfo[];
-  agents: AgentInfo[];
-  active_sessions: number;
-  diagnosis: string | null;
-  recommended_action: string | null;
-}
 
 export default function Channels() {
-  const [health, setHealth] = useState<HealthSummary | null>(null);
+  const [agents, setAgents] = useState<AgentData[]>([]);
+  const [channels, setChannels] = useState<Record<string, ChannelData>>({});
+  const [activeAgent, setActiveAgent] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const h: HealthSummary = await invoke("get_health_summary");
-        setHealth(h);
-      } catch (e) {
-        console.error("فشل جلب القنوات:", e);
-      } finally {
-        setLoading(false);
+  // Modals
+  const [qrModal, setQrModal] = useState(false);
+  const [qrData, setQrData] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
+  const [telegramModal, setTelegramModal] = useState(false);
+  const [telegramToken, setTelegramToken] = useState("");
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const [allowlistModal, setAllowlistModal] = useState(false);
+  const [allowlist, setAllowlist] = useState<string[]>([]);
+  const [allowlistInput, setAllowlistInput] = useState("");
+
+  // Action feedback
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  const showMsg = (msg: string) => {
+    setActionMsg(msg);
+    setTimeout(() => setActionMsg(null), 4000);
+  };
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const raw = await invoke<string>("get_channels_detailed");
+      const data = JSON.parse(raw);
+      if (data.error) { setError(data.error); setAgents([]); setChannels({}); }
+      else {
+        setAgents(data.agents || []);
+        setChannels(data.channels || {});
+        if (!activeAgent && data.agents?.length > 0) setActiveAgent(data.agents[0].id);
       }
-    })();
-  }, []);
+    } catch (e) {
+      setError(`فشل جلب البيانات: ${e}`);
+    } finally { setLoading(false); }
+  }, [activeAgent]);
 
-  const channels = health?.channels ?? [];
-  const connectedCount = channels.filter((c) => c.connected).length;
+  useEffect(() => { fetchData(); }, []);
+
+  const handleReconnect = async (name: string) => {
+    showMsg(`⏳ إعادة ربط ${name}...`);
+    try {
+      const r: any = await invoke("reconnect_channel", { channelName: name });
+      showMsg(r.success ? `✅ تم إعادة ربط ${name}` : `❌ ${r.stderr}`);
+    } catch (e) { showMsg(`❌ ${e}`); }
+    setTimeout(fetchData, 2000);
+  };
+
+  const handleRemove = async (name: string) => {
+    if (!confirm(`متأكد من حذف قناة "${name}"؟`)) return;
+    showMsg(`⏳ حذف ${name}...`);
+    try {
+      const r: any = await invoke("remove_channel", { channelName: name });
+      showMsg(r.success ? `✅ تم حذف ${name}` : `❌ ${r.stderr}`);
+    } catch (e) { showMsg(`❌ ${e}`); }
+    setTimeout(fetchData, 2000);
+  };
+
+  const handleWhatsAppPair = async () => {
+    setQrModal(true);
+    setQrLoading(true);
+    setQrData("");
+    try {
+      const r: any = await invoke("start_whatsapp_pairing");
+      setQrData(r.success ? r.stdout : `❌ ${r.stderr}`);
+    } catch (e) {
+      setQrData(`❌ ${e}`);
+    }
+    setQrLoading(false);
+  };
+
+  const handleTelegramConnect = async () => {
+    if (!telegramToken.trim()) return;
+    setTelegramLoading(true);
+    try {
+      const r: any = await invoke("login_telegram", { botToken: telegramToken.trim() });
+      showMsg(r.success ? "✅ تم ربط تيليجرام" : `❌ ${r.stderr}`);
+    } catch (e) { showMsg(`❌ ${e}`); }
+    setTelegramLoading(false);
+    setTelegramModal(false);
+    setTelegramToken("");
+    setTimeout(fetchData, 2000);
+  };
+
+  const loadAllowlist = async (agentId: string) => {
+    try {
+      const raw = await invoke<string>("get_agent_allowlist", { agentId });
+      setAllowlist(JSON.parse(raw));
+    } catch { setAllowlist([]); }
+  };
+
+  const openAllowlist = (agentId: string) => {
+    setAllowlistModal(true);
+    loadAllowlist(agentId);
+  };
+
+  const channelList = Object.values(channels);
+  const connectedCount = channelList.filter((c) => c.connected).length;
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
+      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
           <h2 className="text-2xl font-bold text-primary">القنوات</h2>
-          <p className="text-sm text-muted mt-0.5">إدارة قنوات الاتصال</p>
+          <p className="text-sm text-muted mt-0.5">
+            {connectedCount}/{channelList.length} متصلة
+          </p>
         </div>
-        {health && (
-          <div
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full ${
-              health.overall === "good"
-                ? "bg-success/10 text-success"
-                : health.overall === "degraded"
-                ? "bg-warning/10 text-warning"
-                : "bg-error/10 text-error"
-            }`}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm border border-border bg-surface hover:bg-bg transition-colors"
           >
-            <Activity size={12} />
-            {health.overall === "good" ? "النظام تمام" : health.overall === "degraded" ? "بعض المشاكل" : "عطل"}
-          </div>
-        )}
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            تحديث
+          </button>
+          <button
+            onClick={handleWhatsAppPair}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm bg-success text-white hover:bg-green-600 transition-colors"
+          >
+            <Plus size={14} /> ربط واتساب
+          </button>
+          <button
+            onClick={() => setTelegramModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm bg-primary text-white hover:bg-primary-dark transition-colors"
+          >
+            <Plus size={14} /> ربط تيليجرام
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex flex-col items-center justify-center h-60 gap-4 text-muted">
+      {/* Error */}
+      {error && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-error/10 border border-error/20 text-error text-sm mb-4">
+          <AlertCircle size={16} /> {error}
+        </div>
+      )}
+
+      {/* Agent Tabs */}
+      {agents.length > 1 && (
+        <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
+          {agents.map((agent) => (
+            <button
+              key={agent.id}
+              onClick={() => setActiveAgent(agent.id)}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
+                activeAgent === agent.id
+                  ? "bg-primary text-white"
+                  : "bg-surface border border-border hover:bg-bg"
+              }`}
+            >
+              <Radio size={14} />
+              {agent.name}
+              {agent.is_default && <span className="text-[10px] opacity-70">(افتراضي)</span>}
+            </button>
+          ))}
+          <button
+            onClick={() => openAllowlist(activeAgent)}
+            className="flex items-center gap-1 px-3 py-2 rounded-xl text-xs border border-border bg-surface hover:bg-bg transition-colors whitespace-nowrap ml-auto"
+          >
+            <Shield size={12} /> Allowlist
+          </button>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex flex-col items-center justify-center h-40 gap-4 text-muted">
           <Loader2 size={32} className="animate-spin text-primary" />
           <p>جاري فحص القنوات...</p>
         </div>
-      ) : channels.length === 0 ? (
+      )}
+
+      {/* Empty state */}
+      {!loading && channelList.length === 0 && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -89,102 +225,299 @@ export default function Channels() {
         >
           <Radio size={48} className="mx-auto text-muted mb-4 opacity-40" />
           <h3 className="text-lg font-semibold mb-2">لا توجد قنوات</h3>
-          <p className="text-sm text-muted mb-4">
-            لإضافة قناة، افتح إعدادات OpenClaw وأضف WhatsApp أو Telegram
+          <p className="text-sm text-muted mb-6">
+            ابدأ بربط واتساب أو تيليجرام للمساعد
           </p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={handleWhatsAppPair}
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-success text-white font-semibold hover:bg-green-600 transition-all"
+            >
+              <QrCode size={18} /> ربط واتساب
+            </button>
+            <button
+              onClick={() => setTelegramModal(true)}
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-primary text-white font-semibold hover:bg-primary-dark transition-all"
+            >
+              <Key size={18} /> ربط تيليجرام
+            </button>
+          </div>
         </motion.div>
-      ) : (
-        <>
-          {/* Channel cards */}
-          <div className="grid gap-3">
-            {channels.map((ch, i) => (
+      )}
+
+      {/* Channel List */}
+      {!loading && channelList.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <AnimatePresence>
+            {channelList.map((ch, i) => (
               <motion.div
                 key={ch.name}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className="flex items-center gap-4 p-4 rounded-2xl bg-surface border border-border"
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.04 }}
+                className={`flex items-center gap-4 p-4 rounded-2xl border ${
+                  ch.connected
+                    ? "bg-surface border-success/20"
+                    : "bg-surface border-border"
+                }`}
               >
+                {/* Status icon */}
                 <div
-                  className={`flex items-center justify-center w-10 h-10 rounded-xl ${
+                  className={`flex items-center justify-center w-11 h-11 rounded-xl ${
                     ch.connected ? "bg-success/10" : "bg-error/10"
                   }`}
                 >
                   {ch.connected ? (
-                    <CheckCircle2 size={20} className="text-success" />
+                    <Wifi size={20} className="text-success" />
                   ) : (
-                    <XCircle size={20} className="text-error" />
+                    <WifiOff size={20} className="text-error" />
                   )}
                 </div>
+
+                {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-sm capitalize">
-                    {ch.name === "whatsapp" ? "WhatsApp" : ch.name}
-                  </h3>
-                  <p className={`text-xs font-medium ${ch.connected ? "text-success" : "text-error"}`}>
-                    {ch.connected ? "متصل" : "غير متصل"}
-                  </p>
-                  {ch.status && <p className="text-xs text-muted truncate mt-0.5">{ch.status}</p>}
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm capitalize">{ch.name}</h3>
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                        ch.connected
+                          ? "bg-success/10 text-success"
+                          : "bg-error/10 text-error"
+                      }`}
+                    >
+                      {ch.connected ? "متصل" : "منفصل"}
+                    </span>
+                    {ch.enabled && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-primary/5 text-primary">
+                        مفعّل
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-muted">
+                    <span>{ch.provider || ch.health_state}</span>
+                    <span>الحالة: {ch.health_state || "—"}</span>
+                  </div>
                 </div>
-                {!ch.connected && (
+
+                {/* Actions */}
+                <div className="flex items-center gap-1.5 flex-shrink-0">
                   <button
-                    onClick={async () => {
-                      try {
-                        const r = await invoke("run_playbook", { playbookId: "run-doctor" });
-                        alert(r);
-                      } catch (e) {
-                        alert(`خطأ: ${e}`);
-                      }
-                    }}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-warning text-white hover:bg-amber-600 transition-colors flex-shrink-0"
+                    onClick={() => handleReconnect(ch.name)}
+                    className="p-2 rounded-lg hover:bg-bg transition-colors"
+                    title="إعادة ربط"
                   >
-                    إعادة ربط
+                    <RefreshCw size={16} className="text-muted" />
                   </button>
-                )}
+                  <button
+                    onClick={() => handleRemove(ch.name)}
+                    className="p-2 rounded-lg hover:bg-error/10 transition-colors"
+                    title="حذف"
+                  >
+                    <Trash2 size={16} className="text-error" />
+                  </button>
+                </div>
               </motion.div>
             ))}
-          </div>
-
-          {/* Stats */}
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="grid grid-cols-4 gap-3 mt-4"
-          >
-            <StatCard icon={Activity} label="جلسات نشطة" value={health?.active_sessions ?? 0} />
-            <StatCard icon={Users} label="وكلاء" value={health?.agents?.length ?? 0} />
-            <StatCard icon={Radio} label="قنوات" value={channels.length} />
-            <StatCard icon={CheckCircle2} label="متصلة" value={connectedCount} color="text-success" />
-          </motion.div>
-        </>
-      )}
-
-      {health?.recommended_action && (
-        <div className="mt-4 p-3 rounded-xl bg-warning/10 border border-warning/20 text-warning text-sm flex items-start gap-2">
-          <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-          {health.recommended_action}
+          </AnimatePresence>
         </div>
       )}
-    </motion.div>
-  );
-}
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  color = "text-primary",
-}: {
-  icon: React.ComponentType<any>;
-  label: string;
-  value: number;
-  color?: string;
-}) {
-  return (
-    <div className="bg-surface border border-border rounded-xl p-3 text-center">
-      <Icon size={16} className={`mx-auto mb-1 ${color}`} />
-      <div className="text-lg font-bold">{value}</div>
-      <div className="text-[11px] text-muted">{label}</div>
-    </div>
+      {/* Action feedback toast */}
+      <AnimatePresence>
+        {actionMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-sidebar text-sidebar-text px-5 py-3 rounded-2xl shadow-lg text-sm z-50"
+          >
+            {actionMsg}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* QR Code Modal */}
+      <AnimatePresence>
+        {qrModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+            onClick={() => { setQrModal(false); setQrData(""); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-surface rounded-3xl p-6 max-w-lg w-full shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <QrCode size={20} className="text-success" />
+                  <h3 className="font-bold text-lg">ربط واتساب</h3>
+                </div>
+                <button
+                  onClick={() => { setQrModal(false); setQrData(""); }}
+                  className="p-1.5 rounded-lg hover:bg-bg transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {qrLoading ? (
+                <div className="flex flex-col items-center gap-4 py-8">
+                  <Loader2 size={40} className="animate-spin text-primary" />
+                  <p className="text-sm text-muted">جاري توليد QR code...</p>
+                </div>
+              ) : qrData ? (
+                <pre className="bg-sidebar text-sidebar-text p-4 rounded-2xl text-xs font-mono max-h-[350px] overflow-y-auto log-viewer">
+                  {qrData}
+                </pre>
+              ) : null}
+
+              <p className="text-xs text-muted mt-3 text-center">
+                افتح واتساب على جوالك → الأجهزة المرتبطة → امسح الـ QR
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Telegram Modal */}
+      <AnimatePresence>
+        {telegramModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+            onClick={() => setTelegramModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-surface rounded-3xl p-6 max-w-md w-full shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Key size={20} className="text-primary" />
+                  <h3 className="font-bold text-lg">ربط تيليجرام</h3>
+                </div>
+                <button onClick={() => setTelegramModal(false)} className="p-1.5 rounded-lg hover:bg-bg transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <label className="block text-sm font-semibold mb-1.5">Bot Token</label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={telegramToken}
+                  onChange={(e) => setTelegramToken(e.target.value)}
+                  placeholder="123456:ABC-DEF..."
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-border bg-bg text-sm font-mono focus:outline-none focus:border-primary-light"
+                  dir="ltr"
+                  onKeyDown={(e) => e.key === "Enter" && handleTelegramConnect()}
+                />
+              </div>
+              <p className="text-xs text-muted mt-2">
+                احصل على التوكن من <code className="bg-primary/5 text-primary px-1 py-0.5 rounded text-xs">@BotFather</code> في تيليجرام
+              </p>
+
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => setTelegramModal(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm hover:bg-bg transition-colors"
+                >
+                  إلغاء
+                </button>
+                <button
+                  onClick={handleTelegramConnect}
+                  disabled={!telegramToken.trim() || telegramLoading}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50"
+                >
+                  {telegramLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  ربط
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Allowlist Modal */}
+      <AnimatePresence>
+        {allowlistModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+            onClick={() => setAllowlistModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-surface rounded-3xl p-6 max-w-lg w-full shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Users size={20} className="text-primary" />
+                  <h3 className="font-bold text-lg">Allowlist — {activeAgent}</h3>
+                </div>
+                <button onClick={() => setAllowlistModal(false)} className="p-1.5 rounded-lg hover:bg-bg transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p className="text-sm text-muted mb-3">
+                الأرقام/المستخدمين المسموح لهم بالتفاعل مع هذا الـ agent
+              </p>
+
+              {allowlist.length > 0 ? (
+                <div className="flex flex-col gap-1.5 mb-3 max-h-[200px] overflow-y-auto">
+                  {allowlist.map((entry, i) => (
+                    <div key={i} className="flex items-center gap-2 p-2 rounded-xl bg-bg border border-border text-sm">
+                      <CheckCircle2 size={14} className="text-success flex-shrink-0" />
+                      <code className="text-xs font-mono">{entry}</code>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted italic mb-3">لا يوجد allowlist — الكل مسموح</p>
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  value={allowlistInput}
+                  onChange={(e) => setAllowlistInput(e.target.value)}
+                  placeholder="+9665XXXXXXXX"
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-border bg-bg text-sm font-mono focus:outline-none focus:border-primary-light"
+                  dir="ltr"
+                />
+                <button
+                  onClick={() => {
+                    if (allowlistInput.trim()) {
+                      setAllowlist([...allowlist, allowlistInput.trim()]);
+                      setAllowlistInput("");
+                    }
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-primary text-white text-sm hover:bg-primary-dark transition-colors"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+              <p className="text-[10px] text-muted mt-2">هذا للعرض فقط — الحفظ الفعلي يحتاج أمر OpenClaw</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

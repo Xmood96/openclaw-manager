@@ -501,3 +501,49 @@ pub async fn get_agents_config() -> WslResult {
             exit_code: -1,
         })
 }
+
+/// بدء ربط واتساب — يرجع QR code عبر الامر مع timeout
+#[tauri::command]
+pub async fn start_whatsapp_pairing() -> WslResult {
+    tokio::task::spawn_blocking(|| {
+        exec_wsl_timeout("openclaw channels login --whatsapp 2>&1 || true", 30)
+    })
+    .await
+    .unwrap_or_else(|e| WslResult {
+        success: false,
+        stdout: String::new(),
+        stderr: format!("خطأ: {}", e),
+        exit_code: -1,
+    })
+}
+
+/// جلب القنوات والوكلاء بشكل مفصل
+#[tauri::command]
+pub async fn get_channels_detailed() -> String {
+    tokio::task::spawn_blocking(|| {
+        let script = "curl -s --max-time 5 http://127.0.0.1:18789/health 2>/dev/null || echo '{}'";
+        let health_json = exec_wsl_timeout(script, 8);
+        if !health_json.success || health_json.stdout.trim().is_empty() {
+            return format!("{{\"error\":\"Gateway غير مستجيب\",\"agents\":[],\"channels\":{{}}}}");
+        }
+        let raw = health_json.stdout.trim().to_string();
+        let script2 = format!(
+            "echo '{}' | python3 -c \"import json,sys; d=json.load(sys.stdin); chs={{}}; [chs.update({{k:{{'name':k,'provider':v.get('provider',''),'connected':v.get('connected',False),'health_state':v.get('healthState','unknown'),'enabled':v.get('enabled',False)}}}}) for k,v in d.get('channels',{{}}).items()]; ags=[{{'id':a.get('agentId',''),'name':a.get('name',''),'is_default':a.get('isDefault',False),'session_count':a.get('sessions',{{}}).get('count',0)}} for a in d.get('agents',[])]; print(json.dumps({{'agents':ags,'channels':chs}},ensure_ascii=False))\"",
+            raw.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " ")
+        );
+        let result = exec_wsl_timeout(&script2, 8);
+        if result.success { result.stdout.trim().to_string() } else { format!("{{\"error\":\"{}\"}}", result.stderr.trim()) }
+    })
+    .await
+    .unwrap_or_else(|e| format!("{{\"error\":\"{}\"}}", e))
+}
+
+/// جلب allowlist للـ agent
+#[tauri::command]
+pub async fn get_agent_allowlist(agent_id: String) -> String {
+    tokio::task::spawn_blocking(move || {
+        let cmd = format!("cat \"$HOME/.openclaw/agents/{}/agent.json\" 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin) if sys.stdin.read(1) else {{}}; allow=d.get('allowlist',d.get('allowList',[])); print(json.dumps(allow if isinstance(allow,list) else []))\" || echo '[]'", agent_id);
+        let result = exec_wsl_timeout(&cmd, 8);
+        result.stdout.trim().to_string()
+    }).await.unwrap_or_else(|_| "[]".into())
+}

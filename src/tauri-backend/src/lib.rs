@@ -29,13 +29,16 @@ pub fn run() {
             wsl_bridge::run_openclaw_doctor,
             wsl_bridge::restart_gateway,
             wsl_bridge::read_gateway_logs,
-            // Channel Management (جديد)
+            // Channel Management
             wsl_bridge::list_channels,
             wsl_bridge::remove_channel,
             wsl_bridge::reconnect_channel,
             wsl_bridge::login_whatsapp,
             wsl_bridge::login_telegram,
             wsl_bridge::get_agents_config,
+            wsl_bridge::start_whatsapp_pairing,
+            wsl_bridge::get_channels_detailed,
+            wsl_bridge::get_agent_allowlist,
             // WebSocket Client
             oc_client::connect_to_gateway,
             oc_client::send_agent_message,
