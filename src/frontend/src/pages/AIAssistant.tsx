@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Bot, User, Send, Plus, Stethoscope, Lightbulb, Loader2, AlertCircle, Wifi, WifiOff, Zap, Settings, Terminal, FileText, Activity,
+  Bot, User, Send, Plus, Stethoscope, Lightbulb, Loader2, AlertCircle, Wifi, WifiOff, Zap, Settings, Terminal,
 } from "lucide-react";
 
 interface AgentMessage {
@@ -61,8 +61,8 @@ export default function AIAssistant() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [initLoading, setInitLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [gatewayOk, setGatewayOk] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [hasAI, setHasAI] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [toolStatus, setToolStatus] = useState<string | null>(null);
@@ -124,7 +124,7 @@ export default function AIAssistant() {
   const startNewSession = useCallback(async () => {
     try {
       setInitLoading(true);
-      const newSession = await invoke<AgentSession>("agent_new_chat");
+      const newSession = await invoke<string>("agent_new_chat");
       setSession(JSON.parse(newSession));
       setError(null);
     } catch (e) { setError(`فشل: ${e}`); }

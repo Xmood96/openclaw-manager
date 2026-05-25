@@ -292,27 +292,35 @@ async fn call_deepseek_with_events(
 
 fn extract_tool_calls(content: &str) -> Vec<(String, String)> {
     let mut tools = Vec::new();
-    // Pattern: run_command("..."), read_file("..."), health_check()
-    let re = regex::Regex::new(r"(run_command|read_file|health_check)\s*\(\s*\"([^\"]*)\"\s*\)").unwrap();
-    for cap in re.captures_iter(content) {
-        let tool = cap[1].to_string();
-        let args = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
-        tools.push((tool, args));
-    }
-    // Also check for COMMAND: xxx pattern
+    // Simple string matching — no regex complexity
     for line in content.lines() {
         let line = line.trim();
+        // run_command("...")
+        if let Some(start) = line.find("run_command(") {
+            let rest = &line[start + 13..]; // skip "run_command(\""
+            if let Some(end) = rest.find("\")") {
+                tools.push(("run_command".into(), rest[..end].to_string()));
+            }
+        }
+        // read_file("...")
+        if let Some(start) = line.find("read_file(") {
+            let rest = &line[start + 11..];
+            if let Some(end) = rest.find("\")") {
+                tools.push(("read_file".into(), rest[..end].to_string()));
+            }
+        }
+        // health_check()
+        if line.contains("health_check()") {
+            tools.push(("health_check".into(), String::new()));
+        }
+        // COMMAND: / READ: / Arabic patterns
         if line.starts_with("COMMAND:") || line.starts_with("command:") || line.starts_with("تنفيذ:") {
             let cmd = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
-            if !cmd.is_empty() {
-                tools.push(("run_command".into(), cmd));
-            }
+            if !cmd.is_empty() { tools.push(("run_command".into(), cmd)); }
         }
         if line.starts_with("READ:") || line.starts_with("read:") || line.starts_with("قراءة:") {
             let path = line.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
-            if !path.is_empty() {
-                tools.push(("read_file".into(), path));
-            }
+            if !path.is_empty() { tools.push(("read_file".into(), path)); }
         }
     }
     tools
