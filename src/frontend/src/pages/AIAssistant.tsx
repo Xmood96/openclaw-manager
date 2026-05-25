@@ -215,6 +215,7 @@ export default function AIAssistant() {
       {!gatewayOk && (
         <div className="flex items-center gap-2 text-xs bg-warning/10 border border-warning/20 text-warning rounded-xl px-3 py-2 mb-2">
           <AlertCircle size={13} /> Gateway واقف — الأوامر المباشرة لن تعمل
+      {error && <div className="flex items-center gap-2 text-xs bg-error/10 border border-error/20 text-error rounded-xl px-3 py-2 mb-2"><AlertCircle size={13} /> {error}</div>}
         </div>
       )}
 
