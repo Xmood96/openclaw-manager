@@ -1,8 +1,7 @@
 // Maintenance Agent — قلب النظام الذكي
 // v0.3: Streaming + tool execution + real-time progress events
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tauri;
+use tauri::{self, Emitter};
 use crate::ai_client::{self, ChatMessage, StreamEvent};
 use std::sync::mpsc;
 
@@ -374,13 +373,13 @@ async fn process_agent_turn(message: &str, session: &mut AgentSession) -> String
     } else if msg.contains("ساعد") || msg.contains("help") || msg.contains("تقدر") {
         "🤖 أقدر أساعدك في:\n• 🩺 تشخيص النظام (اكتب 'شخّص')\n• 📂 قراءة ملفات المشروع (اكتب 'ملف <مسار>')\n• ⚡ تنفيذ أوامر WSL (اكتب 'نفّذ <أمر>')\n• 🔄 إدارة Gateway\n• 📡 فحص القنوات\n• 🛠️ حل المشاكل تلقائياً\n\n💡 جرب تكتب 'شخّص النظام' وشوف!".into()
     } else if msg.starts_with("نفذ ") || msg.starts_with("نفّذ ") || msg.starts_with("run ") {
-        let cmd = msg.replacen("نفذ ", "").replacen("نفّذ ", "").replacen("run ", "").trim().to_string();
+        let cmd = msg.replace("نفذ ", "").replace("نفّذ ", "").replace("run ", "").trim().to_string();
         match crate::wsl_bridge::exec_wsl_timeout(&cmd, 15) {
             r if r.success => format!("✅ تم التنفيذ:\n{}", r.stdout.trim()),
             r => format!("❌ فشل:\n{}", r.stderr.trim()),
         }
     } else if msg.starts_with("ملف ") || msg.starts_with("read ") {
-        let path = msg.replacen("ملف ", "").replacen("read ", "").trim().to_string();
+        let path = msg.replace("ملف ", "").replace("read ", "").trim().to_string();
         match std::fs::read_to_string(&path) {
             Ok(c) => format!("📂 {}:\n{}", path, c.lines().take(20).collect::<Vec<_>>().join("\n")),
             Err(e) => format!("❌ فشل قراءة {}: {}", path, e),
