@@ -16,9 +16,6 @@ import {
   Key,
   Shield,
   Users,
-  Copy,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 
 interface ChannelData {
